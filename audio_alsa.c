@@ -41,6 +41,9 @@
 #include "audio.h"
 #include "common.h"
 
+//Vbot âm lượng mặc định to nhất
+float vbot_volume_factor = 1.0f;
+
 enum alsa_backend_mode {
   abm_disconnected,
   abm_connected,
@@ -1807,6 +1810,25 @@ static int do_play(void *buf, int samples) {
         // Log để debug (có thể comment nếu không cần)
         debug(2, "alsa: silent mode active - filled %d samples with zeros (frame_size=%d)", 
               samples, frame_size);
+      } else if (vbot_volume_factor < 0.999f) {  // Chỉ apply nếu < ~100% để tiết kiệm CPU
+        // Apply software attenuation: nhân buffer với factor
+        
+        // Giả sử format phổ biến nhất: SND_PCM_FORMAT_S16_LE (16-bit signed, stereo → frame_size=4)
+        // Nếu format khác (S24_LE, S32_LE), cần điều chỉnh kiểu dữ liệu
+        int16_t *sample_ptr = (int16_t *)buf;
+        int total_samples = samples * 2;  // channels = 2 (stereo), thay bằng biến channels nếu có
+
+        for (int i = 0; i < total_samples; i++) {
+          float val = (float)sample_ptr[i] * vbot_volume_factor;
+          
+          // Clip để tránh overflow (rất quan trọng!)
+          if (val > 32767.0f) val = 32767.0f;
+          if (val < -32768.0f) val = -32768.0f;
+          
+          sample_ptr[i] = (int16_t)val;
+        }
+        
+        debug(3, "alsa: applied volume factor %.3f to %d samples", vbot_volume_factor, total_samples);
       }
       // === HẾT SỬA ===
 

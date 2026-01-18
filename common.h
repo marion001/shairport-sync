@@ -435,7 +435,9 @@ extern shairport_cfg config;
 extern config_t config_file_stuff;
 extern int type_of_exit_cleanup; // normal, emergency, dbus requested...
 
+//Vbot
 extern int vbot_shairport_silent_mode;  // 1 = output silent (null audio), 0 = bình thường dùng mutex
+extern float vbot_volume_factor;  //THay đổi âm lượng ở đây
 
 int config_set_lookup_bool(config_t *cfg, char *where, int *dst);
 

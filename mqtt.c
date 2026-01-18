@@ -15,6 +15,7 @@
 #include "metadata_hub.h"
 #include "mqtt.h"
 #include <mosquitto.h>
+#include <math.h>
 
 // this holds the mosquitto client
 struct mosquitto *global_mosq = NULL;
@@ -81,6 +82,26 @@ void on_message(__attribute__((unused)) struct mosquitto *mosq,
       vbot_shairport_silent_mode = 0;
       debug(1, "[MQTT]: SILENT MODE OFF - audio trở lại bình thường");
       handled = 1;
+    }
+    else if (strncmp(payload, "volumeset ", 10) == 0) {
+      const char *val_str = payload + 10;
+      float vol;
+      if (strstr(val_str, "dB") != NULL) {
+        // Ví dụ: "volumeset -12dB" → dB
+        vol = atof(val_str);
+        vbot_volume_factor = powf(10.0f, vol / 20.0f);  // dB to linear
+        handled = 1;
+      } else {
+        // Ví dụ: "volumeset 75" → phần trăm
+        vol = atof(val_str);
+        if (vol < 0.0f) vol = 0.0f;
+        if (vol > 100.0f) vol = 100.0f;
+        vbot_volume_factor = vol / 100.0f;
+        handled = 1;
+      }
+      debug(1, "MQTT set volume: payload='%s' → factor=%.3f", payload, vbot_volume_factor);
+      // Optional: publish trạng thái mới (nếu bạn có publish parsed)
+      // char buf[32]; snprintf(buf, sizeof(buf), "%.1f", vol); mqtt_publish("your/topic/volume", buf);
     }
     // Tùy chọn: làm lệnh "pause" cũng kích hoạt silent cục bộ thay vì gửi DACP
     //else if (strcasecmp(trimmed, "pause") == 0) {
