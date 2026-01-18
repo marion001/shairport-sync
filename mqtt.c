@@ -47,29 +47,73 @@ void _cb_log(__attribute__((unused)) struct mosquitto *mosq, __attribute__((unus
 void on_message(__attribute__((unused)) struct mosquitto *mosq,
                 __attribute__((unused)) void *userdata, const struct mosquitto_message *msg) {
 
-  // null-terminate the payload
+  // null-terminate the payload an toàn
   char payload[msg->payloadlen + 1];
   memcpy(payload, msg->payload, msg->payloadlen);
-  payload[msg->payloadlen] = 0;
+  payload[msg->payloadlen] = '\0';
 
-  debug(2, "[MQTT]: received Message on topic %s: %s\n", msg->topic, payload);
+  // Trim khoảng trắng thừa nếu có (tùy chọn, để an toàn hơn)
+  char *trimmed = payload;
+  while (*trimmed == ' ' || *trimmed == '\t' || *trimmed == '\n') trimmed++;
 
-  // All recognized commands
-  char *commands[] = {"command",    "beginff",       "beginrew",   "mutetoggle", "nextitem",
-                      "previtem",   "pause",         "playpause",  "play",       "stop",
-                      "playresume", "shuffle_songs", "volumedown", "volumeup",   NULL};
+  debug(2, "[MQTT]: received Message on topic %s: %s", msg->topic, trimmed);
 
-  int it = 0;
+  // Kiểm tra nếu topic kết thúc bằng "/remote"
+  const char *topic_end = strrchr(msg->topic, '/');
+  if (topic_end && strcmp(topic_end + 1, "remote") == 0) {
+    
+    // Tất cả lệnh được hỗ trợ
+    char *commands[] = {"command",    "beginff",       "beginrew",   "mutetoggle", "nextitem",
+                        "previtem",   "pause",         "playpause",  "play",       "stop",
+                        "playresume", "shuffle_songs", "volumedown", "volumeup",   NULL};
 
-  // send command if it's a valid one
-  while (commands[it] != NULL) {
-    if ((size_t)msg->payloadlen >= strlen(commands[it]) &&
-        strncmp(msg->payload, commands[it], strlen(commands[it])) == 0) {
-      debug(2, "[MQTT]: DACP Command: %s\n", commands[it]);
-      send_simple_dacp_command(commands[it]);
-      break;
+    int handled = 0;
+    int it = 0;
+
+    // === PHẦN XỬ LÝ LỆNH CUSTOM (SILENT MODE) ===
+    if (strcasecmp(trimmed, "silent_on") == 0 || strcasecmp(trimmed, "mute") == 0) {
+      shairport_silent_mode = 1;
+      debug(1, "[MQTT]: SILENT MODE ON - audio output sẽ im lặng cục bộ (software mute)");
+      handled = 1;
+      // Không gửi DACP pause → source vẫn stream, nhưng loa im
     }
-    it++;
+    else if (strcasecmp(trimmed, "silent_off") == 0 || strcasecmp(trimmed, "unmute") == 0) {
+      shairport_silent_mode = 0;
+      debug(1, "[MQTT]: SILENT MODE OFF - audio trở lại bình thường");
+      handled = 1;
+    }
+    // Tùy chọn: làm lệnh "pause" cũng kích hoạt silent cục bộ thay vì gửi DACP
+    else if (strcasecmp(trimmed, "pause") == 0) {
+      shairport_silent_mode = 1;
+      debug(1, "[MQTT]: PAUSE → chuyển sang SILENT MODE cục bộ (không gửi DACP pause)");
+      handled = 1;
+      // Nếu vẫn muốn gửi DACP pause thật → uncomment dòng dưới
+      // send_simple_dacp_command("pause");
+    }
+    // === HẾT PHẦN CUSTOM ===
+
+    // Nếu chưa xử lý custom → kiểm tra lệnh DACP chuẩn
+    if (!handled) {
+      while (commands[it] != NULL) {
+        size_t cmd_len = strlen(commands[it]);
+        if ((size_t)msg->payloadlen >= cmd_len &&
+            strncmp(trimmed, commands[it], cmd_len) == 0) {
+          
+          // Optional: nếu là "pause" và bạn muốn giữ DACP pause thay vì silent
+          // thì xử lý ở đây, nhưng vì đã catch ở trên nên sẽ không vào
+
+          debug(2, "[MQTT]: DACP Command: %s", commands[it]);
+          send_simple_dacp_command(commands[it]);
+          handled = 1;
+          break;
+        }
+        it++;
+      }
+    }
+
+    if (!handled) {
+      debug(1, "[MQTT]: Lệnh không được nhận diện: %s", trimmed);
+    }
   }
 }
 
