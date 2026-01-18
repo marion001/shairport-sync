@@ -72,24 +72,24 @@ void on_message(__attribute__((unused)) struct mosquitto *mosq,
 
     // === PHẦN XỬ LÝ LỆNH CUSTOM (SILENT MODE) ===
     if (strcasecmp(trimmed, "silent_on") == 0 || strcasecmp(trimmed, "mute") == 0) {
-      shairport_silent_mode = 1;
+      vbot_shairport_silent_mode = 1;
       debug(1, "[MQTT]: SILENT MODE ON - audio output sẽ im lặng cục bộ (software mute)");
       handled = 1;
       // Không gửi DACP pause → source vẫn stream, nhưng loa im
     }
     else if (strcasecmp(trimmed, "silent_off") == 0 || strcasecmp(trimmed, "unmute") == 0) {
-      shairport_silent_mode = 0;
+      vbot_shairport_silent_mode = 0;
       debug(1, "[MQTT]: SILENT MODE OFF - audio trở lại bình thường");
       handled = 1;
     }
     // Tùy chọn: làm lệnh "pause" cũng kích hoạt silent cục bộ thay vì gửi DACP
-    else if (strcasecmp(trimmed, "pause") == 0) {
-      shairport_silent_mode = 1;
-      debug(1, "[MQTT]: PAUSE → chuyển sang SILENT MODE cục bộ (không gửi DACP pause)");
-      handled = 1;
+    //else if (strcasecmp(trimmed, "pause") == 0) {
+      //vbot_shairport_silent_mode = 1;
+      //debug(1, "[MQTT]: PAUSE → chuyển sang SILENT MODE cục bộ (không gửi DACP pause)");
+      //handled = 1;
       // Nếu vẫn muốn gửi DACP pause thật → uncomment dòng dưới
       // send_simple_dacp_command("pause");
-    }
+    //}
     // === HẾT PHẦN CUSTOM ===
 
     // Nếu chưa xử lý custom → kiểm tra lệnh DACP chuẩn

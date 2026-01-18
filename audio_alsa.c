@@ -57,7 +57,7 @@ int delay_type_notified = -1; // for controlling the reporting of whether the ou
                               // precision delays (e.g. alsa->pulsaudio virtual devices can't)
 int use_monotonic_clock = 0;  // this value will be set when the hardware is initialised
 
-int shairport_silent_mode = 0;  // mặc định là 0 → âm thanh bình thường
+int vbot_shairport_silent_mode = 0;  // mặc định là 0 → âm thanh bình thường
 
 static void help(void);
 static int init(int argc, char **argv);
@@ -1797,10 +1797,10 @@ static int do_play(void *buf, int samples) {
         debug(1, "alsa: DAC in odd SND_PCM_STATE_* %d prior to writing.", state);
       }
 
-      snd_pcm_state_t prior_state = state; // keep this for afterwards....
+      //snd_pcm_state_t prior_state = state; // keep this for afterwards....
 
       // === PHẦN SỬA: THÊM ĐÂY ===
-      if (shairport_silent_mode) {
+      if (vbot_shairport_silent_mode) {
         // Fill buffer bằng 0 → âm thanh im lặng hoàn toàn (silent PCM)
         memset(buf, 0, (size_t)samples * (size_t)frame_size);
         
