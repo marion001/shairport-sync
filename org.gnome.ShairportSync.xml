@@ -44,6 +44,18 @@
 		<method name='FastForward'/>
 		<method name='Rewind'/>
 		<method name='ToggleMute'/>
+    <!-- VBot -->
+    <method name="Mute">
+      <arg name="success" type="b" direction="out"/>
+    </method>
+    <method name="Unmute">
+      <arg name="success" type="b" direction="out"/>
+    </method>
+    <method name="ChangeVolume">
+      <arg name="percent" type="d" direction="in"/>   <!-- double: 0.0 đến 100.0 -->
+      <arg name="success" type="b" direction="out"/>  <!-- trả về true nếu ok -->
+    </method>
+    <!-- End VBot -->
 		<method name='Next'/>
 		<method name='Previous'/>
 		<method name='Pause'/>

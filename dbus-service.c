@@ -369,6 +369,42 @@ static gboolean on_handle_pause(ShairportSyncRemoteControl *skeleton,
   return TRUE;
 }
 
+//Vbot mute
+static gboolean on_handle_mute(ShairportSyncRemoteControl *skeleton,
+               GDBusMethodInvocation *invocation,
+               __attribute__((unused)) gpointer user_data) {
+  vbot_shairport_silent_mode = 1;
+  //debug(1, "D-Bus Mute received → silent mode ON (vbot_shairport_silent_mode = 1)");
+  shairport_sync_remote_control_complete_mute(skeleton, invocation, TRUE);
+  return TRUE;
+}
+
+//vbot unmute
+static gboolean on_handle_unmute(ShairportSyncRemoteControl *skeleton,
+                 GDBusMethodInvocation *invocation,
+                 __attribute__((unused)) gpointer user_data) {
+  vbot_shairport_silent_mode = 0;
+  //debug(1, "D-Bus Unmute received → silent mode OFF (vbot_shairport_silent_mode = 0)");
+  shairport_sync_remote_control_complete_unmute(skeleton, invocation, TRUE);
+  return TRUE;
+}
+
+//Vbot thay đổi âm lượng, change volume
+static gboolean on_handle_change_volume(ShairportSyncRemoteControl *skeleton,
+                        GDBusMethodInvocation *invocation,
+                        const gdouble percent,  // tham số input từ D-Bus
+                        __attribute__((unused)) gpointer user_data) {
+  float vol = (float)percent;
+  if (vol < 0.0f) vol = 0.0f;
+  if (vol > 100.0f) vol = 100.0f;
+  vbot_volume_factor = vol / 100.0f;  // giống logic MQTT (0.0 → 1.0)
+  //debug(1, "D-Bus ChangeVolume received: %.1f%% → vbot_volume_factor = %.3f", vol, vbot_volume_factor);
+  // Optional: Nếu bạn muốn áp dụng ngay lập tức (như player_volume_set), gọi hàm nội bộ nếu cần
+  // Ví dụ: player_apply_volume_factor();  // nếu bạn có hàm riêng
+  shairport_sync_remote_control_complete_change_volume(skeleton, invocation, TRUE);
+  return TRUE;
+}
+
 static gboolean on_handle_play_pause(ShairportSyncRemoteControl *skeleton,
                                      GDBusMethodInvocation *invocation,
                                      __attribute__((unused)) gpointer user_data) {
@@ -1004,6 +1040,15 @@ static void on_dbus_name_acquired(GDBusConnection *connection, const gchar *name
 
   g_signal_connect(shairportSyncAdvancedRemoteControlSkeleton, "notify::loop-status",
                    G_CALLBACK(notify_loop_status_callback), NULL);
+
+  //Đăng Ký Các Hàm Lệnh Tương Tác VBot 
+  g_signal_connect(shairportSyncRemoteControlSkeleton, "handle-mute",
+                   G_CALLBACK(on_handle_mute), NULL);
+  g_signal_connect(shairportSyncRemoteControlSkeleton, "handle-unmute",
+                   G_CALLBACK(on_handle_unmute), NULL);
+  g_signal_connect(shairportSyncRemoteControlSkeleton, "handle-change-volume",
+                   G_CALLBACK(on_handle_change_volume), NULL);
+  //Kết thúc đăng ký
 
   add_metadata_watcher(dbus_metadata_watcher, NULL);
 
