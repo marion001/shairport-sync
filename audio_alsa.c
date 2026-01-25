@@ -43,6 +43,8 @@
 
 //Vbot âm lượng mặc định to nhất
 float vbot_volume_factor = 1.0f;
+volatile int vbot_open_alsa = 1;  //VBot Mặc định true: cho phép mở ALSA bình thường
+//
 
 enum alsa_backend_mode {
   abm_disconnected,
@@ -1865,6 +1867,10 @@ static int do_play(void *buf, int samples) {
 }
 
 static int do_open(int do_auto_setup) {
+  if (!vbot_open_alsa) {
+      debug(1, "do_open() BỊ CHẶN vì vbot_open_alsa = 0 → KHÔNG mở ALSA");
+      return -EACCES;  // hoặc -EPERM, báo lỗi quyền để caller bỏ qua
+    }
   int ret = 0;
   if (alsa_backend_state != abm_disconnected)
     debug(1, "alsa: do_open() -- opening the output device when it is already "
@@ -1872,7 +1878,7 @@ static int do_open(int do_auto_setup) {
   if (alsa_handle == NULL) {
     // debug(1,"alsa: do_open() -- opening the output device");
     ret = open_alsa_device(do_auto_setup);
-    if (ret == 0) {
+    if (ret == 0 || vbot_open_alsa) {
       mute_requested_internally = 0;
       if (audio_alsa.volume)
         do_volume(set_volume);
@@ -2217,4 +2223,18 @@ static void *alsa_buffer_monitor_thread_code(__attribute__((unused)) void *arg) 
     usleep(sleep_time_us);  // has a cancellation point in it
   }
   pthread_exit(NULL);
+}
+
+
+// ──────────────────────────────────────────────────────────────
+// Public wrapper để D-Bus và các file khác gọi được
+// (không làm hỏng encapsulation của static functions)
+// ──────────────────────────────────────────────────────────────
+//VBot
+int vbot_alsa_open(int do_auto_setup) {
+    return do_open(do_auto_setup);
+}
+
+int vbot_alsa_close(void) {
+    return do_close();
 }

@@ -438,6 +438,8 @@ extern int type_of_exit_cleanup; // normal, emergency, dbus requested...
 //Vbot
 extern int vbot_shairport_silent_mode;  // 1 = output silent (null audio), 0 = bình thường dùng mutex
 extern float vbot_volume_factor;  //THay đổi âm lượng ở đây
+//Vbot: Biến toàn cục để cho phép mở lại ALSA sau close (D-Bus control)
+extern volatile int vbot_open_alsa;
 
 int config_set_lookup_bool(config_t *cfg, char *where, int *dst);
 

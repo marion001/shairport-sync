@@ -46,6 +46,9 @@
 #include <FFTConvolver/convolver.h>
 #endif
 
+extern int vbot_alsa_open(int do_auto_setup);
+extern int vbot_alsa_close(void);
+
 ShairportSync *shairportSyncSkeleton;
 
 int service_is_running = 0;
@@ -404,6 +407,51 @@ static gboolean on_handle_change_volume(ShairportSyncRemoteControl *skeleton,
   shairport_sync_remote_control_complete_change_volume(skeleton, invocation, TRUE);
   return TRUE;
 }
+
+//VBot Enable Open ALSA (set true + mở ngay)
+static gboolean on_handle_enable_open_alsa(ShairportSyncRemoteControl *skeleton,
+                           GDBusMethodInvocation      *invocation,
+                           __attribute__((unused)) gpointer user_data)
+{
+    extern volatile int vbot_open_alsa;
+    extern pthread_mutex_t alsa_mutex;
+    pthread_mutex_lock(&alsa_mutex);
+    vbot_open_alsa = 1;
+    debug(1, "D-Bus: EnableOpenALSA → vbot_open_alsa = 1");
+    // Mở device ngay (an toàn, hàm do_open tự skip nếu đã mở)
+    int ret = vbot_alsa_open(1);
+    if (ret == 0) {
+        debug(1, "D-Bus: Mở ALSA thành công ngay sau khi enable");
+    } else {
+        debug(1, "D-Bus: Mở ALSA trả về %d", ret);
+    }
+    pthread_mutex_unlock(&alsa_mutex);
+    shairport_sync_remote_control_complete_enable_open_alsa(skeleton, invocation, TRUE);
+    return TRUE;
+}
+
+//VBot Disable Open ALSA (set false + đóng ngay)
+static gboolean on_handle_disable_open_alsa(ShairportSyncRemoteControl *skeleton,
+                            GDBusMethodInvocation      *invocation,
+                            __attribute__((unused)) gpointer user_data)
+{
+    extern volatile int vbot_open_alsa;
+    extern pthread_mutex_t alsa_mutex;
+    pthread_mutex_lock(&alsa_mutex);
+    vbot_open_alsa = 0;
+    debug(1, "D-Bus: DisableOpenALSA → vbot_open_alsa = 0");
+    // Đóng device ngay
+    int ret = vbot_alsa_close();
+    if (ret == 0) {
+        debug(1, "D-Bus: Đóng ALSA thành công");
+    } else {
+        debug(1, "D-Bus: Đóng ALSA trả về %d", ret);
+    }
+    pthread_mutex_unlock(&alsa_mutex);
+    shairport_sync_remote_control_complete_disable_open_alsa(skeleton, invocation, TRUE);
+    return TRUE;
+}
+
 
 static gboolean on_handle_play_pause(ShairportSyncRemoteControl *skeleton,
                                      GDBusMethodInvocation *invocation,
@@ -1048,6 +1096,10 @@ static void on_dbus_name_acquired(GDBusConnection *connection, const gchar *name
                    G_CALLBACK(on_handle_unmute), NULL);
   g_signal_connect(shairportSyncRemoteControlSkeleton, "handle-change-volume",
                    G_CALLBACK(on_handle_change_volume), NULL);
+
+
+g_signal_connect(shairportSyncRemoteControlSkeleton, "handle-enable-open-alsa", G_CALLBACK(on_handle_enable_open_alsa), NULL);
+g_signal_connect(shairportSyncRemoteControlSkeleton, "handle-disable-open-alsa", G_CALLBACK(on_handle_disable_open_alsa), NULL);
   //Kết thúc đăng ký
 
   add_metadata_watcher(dbus_metadata_watcher, NULL);

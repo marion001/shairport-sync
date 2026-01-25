@@ -55,6 +55,12 @@
       <arg name="percent" type="d" direction="in"/>   <!-- double: 0.0 đến 100.0 -->
       <arg name="success" type="b" direction="out"/>  <!-- trả về true nếu ok -->
     </method>
+    <method name="EnableOpenALSA">
+      <arg name="success" type="b" direction="out"/>
+    </method>
+    <method name="DisableOpenALSA">
+      <arg name="success" type="b" direction="out"/>
+    </method>
     <!-- End VBot -->
 		<method name='Next'/>
 		<method name='Previous'/>
