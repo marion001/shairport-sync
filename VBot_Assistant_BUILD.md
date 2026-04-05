@@ -52,6 +52,7 @@ $:> shairport-sync -vv
    Installation log:  /tmp/airplay_install_20260118_105020.log
 
 DBUS (Mặc Định Các Lệnh Tương Tác Với VBot Assistant):
+
     #Tắt tiếng
     $:> dbus-send --system --print-reply --dest=org.gnome.ShairportSync /org/gnome/ShairportSync org.gnome.ShairportSync.RemoteControl.Mute
 
