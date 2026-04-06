@@ -62,16 +62,42 @@ install_airplay_v3.sh: Trình cài đặt chính mạnh mẽ thực hiện tất
 DBUS (Mặc Định Các Lệnh Tương Tác Với VBot Assistant):
 
     #Tắt tiếng
-    $:> dbus-send --system --print-reply --dest=org.gnome.ShairportSync /org/gnome/ShairportSync org.gnome.ShairportSync.RemoteControl.Mute
+        $:> dbus-send --system --print-reply --dest=org.gnome.ShairportSync /org/gnome/ShairportSync org.gnome.ShairportSync.RemoteControl.Mute
 
     #Bật tiếng
-    $:> dbus-send --system --print-reply --dest=org.gnome.ShairportSync /org/gnome/ShairportSync org.gnome.ShairportSync.RemoteControl.Unmute
+        $:> dbus-send --system --print-reply --dest=org.gnome.ShairportSync /org/gnome/ShairportSync org.gnome.ShairportSync.RemoteControl.Unmute
 
     #Thay đổi âm lượng
-    $:> dbus-send --system --print-reply --dest=org.gnome.ShairportSync /org/gnome/ShairportSync org.gnome.ShairportSync.RemoteControl.ChangeVolume double:10
+        $:> dbus-send --system --print-reply --dest=org.gnome.ShairportSync /org/gnome/ShairportSync org.gnome.ShairportSync.RemoteControl.ChangeVolume double:10
 
     #Bật quyền mở ALSA (mở ngay)
-    $:> dbus-send --system --print-reply --dest=org.gnome.ShairportSync /org/gnome/ShairportSync org.gnome.ShairportSync.RemoteControl.EnableOpenALSA
+        $:> dbus-send --system --print-reply --dest=org.gnome.ShairportSync /org/gnome/ShairportSync org.gnome.ShairportSync.RemoteControl.EnableOpenALSA
 
     #Tắt quyền mở ALSA (đóng ngay)
-    $:> dbus-send --system --print-reply --dest=org.gnome.ShairportSync /org/gnome/ShairportSync org.gnome.ShairportSync.RemoteControl.DisableOpenALSA
+        $:> dbus-send --system --print-reply --dest=org.gnome.ShairportSync /org/gnome/ShairportSync org.gnome.ShairportSync.RemoteControl.DisableOpenALSA
+
+    #Lấy mức âm lượng hiện tại. Hàm này trả về giá trị nằm giữa -30.0 và 0.0
+    tương ứng với mức âm lượng trên giao diện người dùng. Nó cũng có thể trả về -144.0 để báo hiệu chế độ tắt tiếng
+    	$:> dbus-send --print-reply --system --dest=org.gnome.ShairportSync /org/gnome/ShairportSync org.freedesktop.DBus.Properties.Get string:org.gnome.ShairportSync string:Volume
+    
+    #Xác định ngưỡng âm lượng
+    	$:> dbus-send --print-reply --system --dest=org.gnome.ShairportSync /org/gnome/ShairportSync org.freedesktop.DBus.Properties.Get string:org.gnome.ShairportSync string:LoudnessThreshold
+    
+    #Lấy trạng thái đang phát hay không
+    	$:> dbus-send --print-reply --system --dest=org.gnome.ShairportSync /org/gnome/ShairportSync org.freedesktop.DBus.Properties.Get string:org.gnome.ShairportSync string:Active
+    
+    #Đặt mức âm lượng hiện tại. Giá trị này nên nằm trong khoảng từ -30.0 đến 0.0
+    Đặt giá trị -144.0 để tắt tiếng. Lưu ý rằng tất cả các thao tác này được thực hiện cục bộ trên thiết bị Shairport Sync
+    Việc điều chỉnh âm lượng của nguồn âm thanh (ví dụ: iTunes / macOS Music / iOS) sẽ không được cập nhật để phản ánh bất kỳ thay đổi nào.
+    	$:> dbus-send --print-reply --system --dest=org.gnome.ShairportSync /org/gnome/ShairportSync org.freedesktop.DBus.Properties.Set string:org.gnome.ShairportSync string:Volume variant:double:-10.0
+    
+    #Hãy dừng phiên phát hiện tại ngay lập tức
+    Shairport Sync sẽ ngừng phát và ngắt kết nối với nguồn âm thanh ngay lập tức
+    Điều này có thể hiển thị dưới dạng lỗi ở nguồn phát.
+    	$:> dbus-send --system --print-reply --type=method_call --dest=org.gnome.ShairportSync '/org/gnome/ShairportSync' org.gnome.ShairportSync.DropSession
+    
+    #Giao thức mà Shairport Sync được thiết kế cho -- AirPlay hoặc AirPlay 2:
+    	$:> dbus-send --print-reply --system --dest=org.gnome.ShairportSync /org/gnome/ShairportSync org.freedesktop.DBus.Properties.Get string:org.gnome.ShairportSync string:Protocol
+    
+    #kiểm tra thông tin các lệnh có thể giao tiếp với dbus:
+        $:> gdbus introspect --system --dest org.gnome.ShairportSync --object-path /org/gnome/ShairportSync
