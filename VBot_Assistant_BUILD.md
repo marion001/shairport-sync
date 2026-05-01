@@ -27,6 +27,8 @@ install_airplay_v3.sh: Trình cài đặt chính mạnh mẽ thực hiện tất
 #Build lại shairport:
 
     $:> cd shairport-sync
+    $:> chmod +x verify-gitversion
+    $:> dos2unix verify-gitversion
     $:> make clean
     $:> autoreconf -fi
     $:> ./configure --with-mqtt-client --sysconfdir=/etc --with-alsa \
