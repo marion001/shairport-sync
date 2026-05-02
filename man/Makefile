@@ -161,7 +161,7 @@ AUTOMAKE = ${SHELL} '/home/pi/shairport-sync/missing' automake-1.16
 AWK = mawk
 CC = gcc
 CCDEPMODE = depmode=gcc3
-CFLAGS = -I/usr/include/uuid -I/usr/include/arm-linux-gnueabihf -I/usr/include/arm-linux-gnueabihf -I/usr/include/arm-linux-gnueabihf -I/usr/include/arm-linux-gnueabihf    -pthread -I/usr/include/gio-unix-2.0 -I/usr/include/libmount -I/usr/include/blkid -I/usr/include/glib-2.0 -I/usr/lib/arm-linux-gnueabihf/glib-2.0/include    -O3
+CFLAGS = -I/usr/include/arm-linux-gnueabihf -I/usr/include/arm-linux-gnueabihf -I/usr/include/arm-linux-gnueabihf -I/usr/include/arm-linux-gnueabihf    -pthread -I/usr/include/gio-unix-2.0 -I/usr/include/libmount -I/usr/include/blkid -I/usr/include/glib-2.0 -I/usr/lib/arm-linux-gnueabihf/glib-2.0/include    -O3
 CPP = gcc -E
 CPPFLAGS = 
 CUSTOM_PID_DIR = 
@@ -188,7 +188,7 @@ INSTALL_SCRIPT = ${INSTALL}
 INSTALL_STRIP_PROGRAM = $(install_sh) -c -s
 LDFLAGS = 
 LIBOBJS = 
-LIBS = -luuid -lswresample -lavformat -lavcodec -lavutil -luuid -lgcrypt -lsodium -lplist-2.0 -lmosquitto -lgio-2.0 -lgobject-2.0 -lglib-2.0 -lasound -lavahi-common -lavahi-client -lsoxr -lssl -lcrypto -lconfig -lpopt -lm -lpthread -lrt 
+LIBS = -lswresample -lavformat -lavcodec -lavutil -luuid -lgcrypt -lsodium -lplist-2.0 -lmosquitto -lgio-2.0 -lgobject-2.0 -lglib-2.0 -lasound -lavahi-common -lavahi-client -lsoxr -lssl -lcrypto -lconfig -lpopt -lm -lpthread -lrt 
 LTLIBOBJS = 
 MAKEINFO = ${SHELL} '/home/pi/shairport-sync/missing' makeinfo
 MKDIR_P = /usr/bin/mkdir -p
@@ -196,10 +196,10 @@ OBJEXT = o
 PACKAGE = shairport-sync
 PACKAGE_BUGREPORT = 4265913+mikebrady@users.noreply.github.com
 PACKAGE_NAME = shairport-sync
-PACKAGE_STRING = shairport-sync 5.0.2
+PACKAGE_STRING = shairport-sync 5.0.4
 PACKAGE_TARNAME = shairport-sync
 PACKAGE_URL = 
-PACKAGE_VERSION = 5.0.2
+PACKAGE_VERSION = 5.0.4
 PATH_SEPARATOR = :
 PIPEWIRE_CFLAGS = 
 PIPEWIRE_LIBS = 
@@ -215,9 +215,9 @@ SHELL = /bin/bash
 SSL_CFLAGS = 
 SSL_LIBS = -lssl -lcrypto
 STRIP = 
-SYSTEMD_AFTER_ARGS = After= avahi-daemon.service
-SYSTEMD_REQUIRES_ARGS = Requires= avahi-daemon.service
-VERSION = 5.0.2
+SYSTEMD_AFTER_ARGS = After=avahi-daemon.service nqptp.service
+SYSTEMD_REQUIRES_ARGS = Requires=avahi-daemon.service nqptp.service
+VERSION = 5.0.4
 XMLTOMAN = 
 XXD_CHECK = yes
 abs_builddir = /home/pi/shairport-sync/man
@@ -270,8 +270,6 @@ libsodium_CFLAGS =
 libsodium_LIBS = -lsodium
 libswresample_CFLAGS = -I/usr/include/arm-linux-gnueabihf
 libswresample_LIBS = -lswresample
-libuuid_CFLAGS = -I/usr/include/uuid
-libuuid_LIBS = -luuid
 localedir = ${datarootdir}/locale
 localstatedir = ${prefix}/var
 mandir = ${datarootdir}/man

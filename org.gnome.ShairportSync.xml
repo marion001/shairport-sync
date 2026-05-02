@@ -45,12 +45,6 @@
 		<method name='FastForward'/>
 		<method name='Rewind'/>
 		<method name='ToggleMute'/>
-
-    <!-- VBot -->
-		<method name='Mute'/>
-		<method name='Unmute'/>
-    <!-- END VBot -->
-
 		<method name='Next'/>
 		<method name='Previous'/>
 		<method name='Pause'/>
@@ -70,19 +64,18 @@
     <method name="SetAirplayVolume">
       <arg name="volume" type="d" direction="in" />
     </method>
-
-    <!-- VBot -->
-    <method name="ChangeVolume">
-      <arg name="percent" type="d" direction="in" />
-    </method>
-    <method name="EnableOpenALSA"/>
-    <method name="DisableOpenALSA"/>
-    <!-- END VBot -->
-
 		<property name='Metadata' type='a{sv}' access='read'>
 			<annotation name="org.qtproject.QtDBus.QtTypeName" value="QVariantMap"/>
 		</property>
 		<property name='Available' type='b' access='read'/>
+		<!-- VBot: Additional remote control methods -->
+		<method name='Mute'/>
+		<method name='Unmute'/>
+		<method name='ChangeVolume'>
+			<arg name="volume" type="d" direction="in" />
+		</method>
+		<method name='EnableOpenALSA'/>
+		<method name='DisableOpenALSA'/>
   </interface>
   <interface name="org.gnome.ShairportSync.AdvancedRemoteControl">
 		<property name='Available' type='b' access='read'/>

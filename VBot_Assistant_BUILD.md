@@ -1,5 +1,12 @@
-#Bản Build: 5.0.2
-#Ngày Build: 04/04/2026
+#Bản Build: 5.0.4
+#Ngày Build: 02/05/2026
+
+Các File Can Thiệp:
+	- audio_alsa.c
+	- dbus-service.c
+	- org.gnome.ShairportSync.xml
+	- verify-gitversion	(Thay Đổi Phiên Bản Build)
+	- audio_alsa_vbot.h	(Tạo Mới File)
 
 GitHub: https://github.com/marion001/shairport-sync
 GitHub Source Gốc: https://github.com/mikebrady/shairport-sync

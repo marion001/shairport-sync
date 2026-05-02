@@ -3,9 +3,9 @@
 test -f gitversion-stamp && BGD=`cat gitversion-stamp` || :
 # echo "existing gitversion-stamp is $BGD"
 GD=`git describe --tags --dirty --broken --always 2>/dev/null`
+GD="VBot_02_05_2026-$GD"
 if [ x"$GD" = x ] ; then
-  #Ngày Build Source Shairport Sync 5.0.2 tương thích với VBot: 04/04/2026
-  GD="VBot_04_04_2026-Shairport_Sync-5.0.2"
+  GD="NA"
 fi
 # echo "current git description is $GD"
 printf "build: $GD\n" # displays git version
