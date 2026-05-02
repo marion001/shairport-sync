@@ -2,8 +2,9 @@
 # echo "This is the git version checker"
 test -f gitversion-stamp && BGD=`cat gitversion-stamp` || :
 # echo "existing gitversion-stamp is $BGD"
-GD=`git describe --tags --dirty --broken --always 2>/dev/null`
-GD="VBot_02_05_2026-$GD"
+#GD=`git describe --tags --dirty --broken --always 2>/dev/null`
+#GD="VBot_02_05_2026-$GD"
+GD="VBot_02_05_2026-5.0.4"
 if [ x"$GD" = x ] ; then
   GD="NA"
 fi
