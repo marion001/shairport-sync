@@ -71,19 +71,24 @@ install_airplay_v3.sh: Trình cài đặt chính mạnh mẽ thực hiện tất
 
 DBUS (Mặc Định Các Lệnh Tương Tác Với VBot Assistant):
 
-    #Tắt tiếng
+    #Tắt tiếng VBot Đã sửa Source
         $:> dbus-send --system --print-reply --dest=org.gnome.ShairportSync /org/gnome/ShairportSync org.gnome.ShairportSync.RemoteControl.Mute
 
-    #Bật tiếng
+    #Bật tiếng VBot Đã sửa Source
         $:> dbus-send --system --print-reply --dest=org.gnome.ShairportSync /org/gnome/ShairportSync org.gnome.ShairportSync.RemoteControl.Unmute
 
-    #Thay đổi âm lượng
+    #Thay đổi âm lượng VBot Đã sửa Source
         $:> dbus-send --system --print-reply --dest=org.gnome.ShairportSync /org/gnome/ShairportSync org.gnome.ShairportSync.RemoteControl.ChangeVolume double:10
 
-    #Bật quyền mở ALSA (mở ngay)
+	#Thay đổi âm lượng lệnh Gốc
+	# Đặt mức âm lượng hiện tại. Giá trị này phải nằm trong khoảng từ -30.0 đến 0.0 (0.0 mức âm lượng lớn nhấn) Đặt giá trị -144.0 để tắt tiếng. Lưu ý rằng tất cả thao tác này được thực hiện cục bộ trên thiết bị Shairport Sync.
+	# Việc điều chỉnh âm lượng của nguồn âm thanh (ví dụ: iTunes / macOS Music / iOS) sẽ không được cập nhật để phản ánh bất kỳ thay đổi nào.
+		$:> dbus-send --print-reply --system --dest=org.gnome.ShairportSync /org/gnome/ShairportSync org.freedesktop.DBus.Properties.Set string:org.gnome.ShairportSync string:Volume variant:double:-10.0
+
+    #Bật quyền mở ALSA (mở ngay VBot Đã sửa Source)
         $:> dbus-send --system --print-reply --dest=org.gnome.ShairportSync /org/gnome/ShairportSync org.gnome.ShairportSync.RemoteControl.EnableOpenALSA
 
-    #Tắt quyền mở ALSA (đóng ngay)
+    #Tắt quyền mở ALSA (đóng ngay VBot Đã sửa Source)
         $:> dbus-send --system --print-reply --dest=org.gnome.ShairportSync /org/gnome/ShairportSync org.gnome.ShairportSync.RemoteControl.DisableOpenALSA
 
     #Lấy mức âm lượng hiện tại. Hàm này trả về giá trị nằm giữa -30.0 và 0.0
