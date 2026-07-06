@@ -40,6 +40,7 @@
 #include "activity_monitor.h"
 #include "audio.h"
 #include "common.h"
+#include "utilities/string_utilities.h"
 
 enum alsa_backend_mode {
   abm_disconnected,
@@ -148,11 +149,11 @@ pthread_t alsa_buffer_monitor_thread;
 int mute_requested_externally = 0;
 int mute_requested_internally = 0;
 
-// VBot: biến toàn cục kiểm soát chế độ mở ALSA
-volatile int vbot_open_alsa = 1;  // 1 = cho phép mở exclusive, 0 = cho phép chia sẻ
-volatile int vbot_shairport_silent_mode = 0; // 1 = mute bằng silent mode, 0 = bình thường
-float vbot_volume_factor = 1.0f; // 1.0 = Mặc định full volume
-//END VBot
+/* VBot globals: control silent mode, ALSA open mode and volume factor */
+volatile int vbot_shairport_silent_mode = 0;
+/* 1 = allow exclusive/blocking open (default in old source), 0 = use non-blocking/open-shared */
+volatile int vbot_open_alsa = 1;
+float vbot_volume_factor = 1.0f;
 
 // for tracking if the output device has stalled
 uint64_t stall_monitor_new_frame_count_time; // when the delay was last measured
@@ -253,11 +254,9 @@ static int get_permissible_configuration_settings() {
     snd_pcm_info_alloca(&local_alsa_info);
     pthread_cleanup_debug_mutex_lock(&alsa_mutex, 50000, 0);
     snd_pcm_t *temporary_alsa_handle = NULL;
-    // VBot
-    extern volatile int vbot_open_alsa;
+    /* VBot: allow switching to non-blocking open when vbot_open_alsa == 0 */
     int mode = vbot_open_alsa ? 0 : SND_PCM_NONBLOCK;
     ret = snd_pcm_open(&temporary_alsa_handle, alsa_out_dev, SND_PCM_STREAM_PLAYBACK, mode);
-    //END VBot
     if (ret == 0) {
       snd_pcm_type_t device_type = snd_pcm_type(temporary_alsa_handle);
       ret = snd_pcm_info(temporary_alsa_handle, local_alsa_info);
@@ -316,7 +315,7 @@ static int get_permissible_configuration_settings() {
               debug(3, "\"%s\" can handle %u channels.", alsa_out_dev, c);
             } else {
               // the device can't handle this number of channels
-              debug(3, "\"%s\" can not handle %u channels.", alsa_out_dev, c);
+              debug(4, "\"%s\" can not handle %u channels.", alsa_out_dev, c);
               config.channel_set &=
                   ~(1 << c); // the alsa device can't accommodate this number of channels
             }
@@ -342,7 +341,7 @@ static int get_permissible_configuration_settings() {
               debug(3, "\"%s\" can handle a rate of %u fps.", alsa_out_dev,
                     sps_rate_actual_rate(r));
             } else {
-              debug(3, "\"%s\" can not handle a rate of %u fps.", alsa_out_dev,
+              debug(4, "\"%s\" can not handle a rate of %u fps.", alsa_out_dev,
                     sps_rate_actual_rate(r));
               config.rate_set &= ~(1 << r); // the alsa device doesn't do this rate
             }
@@ -367,7 +366,7 @@ static int get_permissible_configuration_settings() {
               debug(3, "\"%s\" can handle the %s format.", alsa_out_dev,
                     sps_format_description_string(f));
             } else {
-              debug(3, "\"%s\" can not handle the %s format.", alsa_out_dev,
+              debug(4, "\"%s\" can not handle the %s format.", alsa_out_dev,
                     sps_format_description_string(f));
               config.format_set &= ~(1 << f); // the alsa device doesn't do this format
             }
@@ -710,15 +709,13 @@ static int actual_open_alsa_device() {
     snd_pcm_uframes_t actual_buffer_length_in_frames;
     snd_pcm_access_t access;
 
-    // VBot
-    extern volatile int vbot_open_alsa;
+    /* VBot: respect vbot_open_alsa when opening the real device */
     int mode = vbot_open_alsa ? 0 : SND_PCM_NONBLOCK;
     ret = snd_pcm_open(&alsa_handle, alsa_out_dev, SND_PCM_STREAM_PLAYBACK, mode);
-    //END VBot
     // EHOSTDOWN seems to signify that it's a PipeWire pseudo device that can't be accessed by this
     // user. So, try the first device ALSA device and log it.
     if ((ret == -EHOSTDOWN) && (strcmp(alsa_out_dev, "default") == 0)) {
-      ret = snd_pcm_open(&alsa_handle, "hw:0", SND_PCM_STREAM_PLAYBACK, 0);
+    ret = snd_pcm_open(&alsa_handle, "hw:0", SND_PCM_STREAM_PLAYBACK, mode);
       if ((ret == 0) || (ret == -EBUSY)) {
         // being busy should be okay
         inform("the default ALSA device is inaccessible -- \"hw:0\" used instead.");
@@ -965,8 +962,8 @@ static int actual_open_alsa_device() {
 
       if ((snd_pcm_hw_params_get_rate_numden(alsa_params, &uval, &uval2) == 0) && (uval2 != 0))
         // watch for a divide by zero too!
-        debug(log_level, "  precise (rational) rate = %.3f frames per second (i.e. %u/%u).", (1.0 * uval) / uval2, uval,
-              uval2);
+        debug(log_level, "  precise (rational) rate = %.3f frames per second (i.e. %u/%u).",
+              (1.0 * uval) / uval2, uval, uval2);
       else
         debug(log_level, "  precise (rational) rate information unavailable.");
 
@@ -1274,7 +1271,8 @@ static int init(int argc, char **argv) {
       else {
         warn("Invalid disable_synchronization option choice \"%s\". It should "
              "be \"yes\" or "
-             "\"no\". It is set to \"no\".", str);
+             "\"no\". It is set to \"no\".",
+             str);
         config.no_sync = 0;
       }
     }
@@ -1290,7 +1288,8 @@ static int init(int argc, char **argv) {
       else {
         warn("Invalid mute_using_playback_switch option choice \"%s\". It "
              "should be \"yes\" or "
-             "\"no\". It is set to \"no\".", str);
+             "\"no\". It is set to \"no\".",
+             str);
         config.alsa_use_hardware_mute = 0;
       }
     }
@@ -1304,7 +1303,8 @@ static int init(int argc, char **argv) {
       else {
         warn("Invalid use_hardware_mute_if_available option choice \"%s\". It "
              "should be \"yes\" or "
-             "\"no\". It is set to \"no\".", str);
+             "\"no\". It is set to \"no\".",
+             str);
         config.alsa_use_hardware_mute = 0;
       }
     }
@@ -1318,7 +1318,8 @@ static int init(int argc, char **argv) {
       else {
         warn("Invalid use_mmap_if_available option choice \"%s\". It should be "
              "\"yes\" or \"no\". "
-             "It remains set to \"yes\".", str);
+             "It remains set to \"yes\".",
+             str);
         config.no_mmap = 0;
       }
     }
@@ -1438,7 +1439,8 @@ static int init(int argc, char **argv) {
       else {
         warn("Invalid use_precision_timing option choice \"%s\". It should be "
              "\"yes\", \"auto\" or \"no\". "
-             "It remains set to \"%s\".", str,
+             "It remains set to \"%s\".",
+             str,
              config.use_precision_timing == YNA_NO     ? "no"
              : config.use_precision_timing == YNA_AUTO ? "auto"
                                                        : "yes");
@@ -2000,36 +2002,91 @@ static int do_play(void *buf, int samples) {
         ret = snd_pcm_recover(alsa_handle, ret, 1);
       }
 
-      // VBot: xử lý silent mode và volume factor
-      if (vbot_shairport_silent_mode) {
-        size_t bytes_to_zero = samples *
-            fr[FORMAT_FROM_ENCODED_FORMAT(current_encoded_output_format)].sample_size *
-            CHANNELS_FROM_ENCODED_FORMAT(current_encoded_output_format);
-        memset(buf, 0, bytes_to_zero);
-        debug(2, "alsa: silent mode active - zeroed %zu bytes.", bytes_to_zero);
-      } else if (vbot_volume_factor < 0.999f) {
-        if (fr[FORMAT_FROM_ENCODED_FORMAT(current_encoded_output_format)].alsa_code ==
-            SND_PCM_FORMAT_S16_LE) {
-          int16_t *sample_ptr = (int16_t *)buf;
-          int total_samples =
-              samples * CHANNELS_FROM_ENCODED_FORMAT(current_encoded_output_format);
-          for (int i = 0; i < total_samples; i++) {
-            float val = (float)sample_ptr[i] * vbot_volume_factor;
-            if (val > 32767.0f)
-              val = 32767.0f;
-            if (val < -32768.0f)
-              val = -32768.0f;
-            sample_ptr[i] = (int16_t)val;
-          }
-          debug(3, "alsa: applied volume factor %.3f to %d samples",
-                vbot_volume_factor, total_samples);
-        }
-      }
-      //END VBot
-
       snd_pcm_state_t prior_state = state; // keep this for afterwards....
       debug(4, "alsa: write %d frames.", samples);
-      ret = alsa_pcm_write(alsa_handle, buf, samples);
+
+      /* VBot: software mute / software volume factor
+       * If vbot_shairport_silent_mode is set, send silence instead of buf.
+       * If vbot_volume_factor != 1.0, scale samples (for common sample sizes).
+       */
+      void *write_buf = buf;
+      void *procbuf = NULL;
+      if ((vbot_shairport_silent_mode != 0) || (vbot_volume_factor != 1.0f)) {
+        int channels = CHANNELS_FROM_ENCODED_FORMAT(current_encoded_output_format);
+        sps_format_t fmt = (sps_format_t)FORMAT_FROM_ENCODED_FORMAT(current_encoded_output_format);
+        int sample_bytes = 1;
+        if ((fmt >= 0) && (fmt <= SPS_FORMAT_HIGHEST_NATIVE))
+          sample_bytes = fr[fmt].sample_size;
+        size_t bytes = (size_t)samples * (size_t)channels * (size_t)sample_bytes;
+        procbuf = malloc(bytes);
+        if (procbuf != NULL) {
+          if (vbot_shairport_silent_mode != 0) {
+            memset(procbuf, 0, bytes);
+          } else {
+            /* apply simple scaling for 16-bit and 32-bit samples, basic support for 24-bit */
+            if (sample_bytes == 2) {
+              int total = samples * channels;
+              int16_t *in = (int16_t *)buf;
+              int16_t *out = (int16_t *)procbuf;
+              for (int i = 0; i < total; i++) {
+                int32_t v = in[i];
+                v = (int32_t)floorf((float)v * vbot_volume_factor + 0.5f);
+                if (v > INT16_MAX)
+                  v = INT16_MAX;
+                else if (v < INT16_MIN)
+                  v = INT16_MIN;
+                out[i] = (int16_t)v;
+              }
+            } else if (sample_bytes == 4) {
+              int total = samples * channels;
+              int32_t *in = (int32_t *)buf;
+              int32_t *out = (int32_t *)procbuf;
+              for (int i = 0; i < total; i++) {
+                /* assume native 32-bit signed samples */
+                int64_t v = in[i];
+                v = (int64_t)llround((double)v * (double)vbot_volume_factor);
+                if (v > INT32_MAX)
+                  v = INT32_MAX;
+                else if (v < INT32_MIN)
+                  v = INT32_MIN;
+                out[i] = (int32_t)v;
+              }
+            } else if (sample_bytes == 3) {
+              /* 24-bit little endian packed into 3 bytes */
+              unsigned char *in = (unsigned char *)buf;
+              unsigned char *out = (unsigned char *)procbuf;
+              int total = samples * channels;
+              for (int i = 0; i < total; i++) {
+                int offset = i * 3;
+                int32_t v = in[offset] | (in[offset + 1] << 8) | (in[offset + 2] << 16);
+                /* sign extend */
+                if (v & 0x800000)
+                  v |= 0xFF000000;
+                int64_t vv = (int64_t)llround((double)v * (double)vbot_volume_factor);
+                if (vv > 0x7FFFFF)
+                  vv = 0x7FFFFF;
+                else if (vv < -0x800000)
+                  vv = -0x800000;
+                int32_t vout = (int32_t)vv;
+                out[offset] = vout & 0xFF;
+                out[offset + 1] = (vout >> 8) & 0xFF;
+                out[offset + 2] = (vout >> 16) & 0xFF;
+              }
+            } else {
+              /* unknown sample size: fallback to copying without scaling */
+              memcpy(procbuf, buf, bytes);
+            }
+          }
+          write_buf = procbuf;
+        } else {
+          debug(1, "VBot: could not allocate processing buffer for software volume/mute");
+        }
+      }
+
+      ret = alsa_pcm_write(alsa_handle, write_buf, samples);
+
+      if (procbuf)
+        free(procbuf);
       if (ret == -EIO) {
         debug(1, "alsa: I/O Error.");
         usleep(20000); // give it a breather...
@@ -2084,14 +2141,13 @@ static int do_play(void *buf, int samples) {
   return ret;
 }
 
-static int do_open(void) {
+static int do_open() {
   // VBot: kiểm tra chế độ mở ALSA
   extern volatile int vbot_open_alsa;
   if (!vbot_open_alsa) {
     debug(1, "do_open() BI CHAN vi vbot_open_alsa = 0 -> KHONG mo ALSA");
-    return -EACCES;  // hoac -EPERM, bao loi quyen de caller bo qua
+    return -EACCES; /* caller should ignore this and not try to open ALSA */
   }
-  //END VBot
 
   int ret = 0;
   if (alsa_backend_state != abm_disconnected)
@@ -2126,29 +2182,34 @@ static int do_open(void) {
 }
 
 static int do_close() {
-  debug(2, "alsa: do_close()");
   if (alsa_backend_state == abm_disconnected)
-    debug(1, "alsa: do_close() -- closing the output device when it is already "
-             "disconnected");
+    debug(3, "alsa: do_close() -- output device is already disconnected");
   int derr = 0;
   if (alsa_handle) {
+    debug(3, "alsa: do_close() -- closing the output device");
     if ((derr = snd_pcm_drop(alsa_handle)))
       debug(1, "Error %d (\"%s\") dropping output device.", derr, snd_strerror(derr));
-    usleep(10000); // wait for the hardware to do its trick. BTW, this make the function pthread
+    usleep(20000); // wait for the hardware to do its trick. BTW, this make the function pthread
                    // cancellable
     if ((derr = snd_pcm_hw_free(alsa_handle)))
       debug(1, "Error %d (\"%s\") freeing the output device hardware.", derr, snd_strerror(derr));
-    debug(2, "alsa: do_close() -- closing alsa handle");
+    debug(3, "alsa: do_close() -- closing alsa handle");
     if ((derr = snd_pcm_close(alsa_handle)))
       debug(1, "Error %d (\"%s\") closing the output device.", derr, snd_strerror(derr));
     alsa_handle = NULL;
-    alsa_handle_status = ENODEV; // no device open
+    alsa_handle_status = -ENODEV; // no device open
   } else {
-    debug(1, "alsa: do_close() -- output device already closed.");
+    debug(3, "alsa: do_close() -- output device is already closed.");
   }
+  debug(3, "alsa: do_close() -- alsa_backend_state => abm_disconnected.");
   alsa_backend_state = abm_disconnected;
   return derr;
 }
+
+/* VBot helper wrappers to allow external control (called from D-Bus handlers) */
+int vbot_alsa_open(int do_auto_setup) { (void)do_auto_setup; return do_open(); }
+
+int vbot_alsa_close(void) { return do_close(); }
 
 static int sub_flush() {
   if (alsa_backend_state == abm_disconnected)
@@ -2226,14 +2287,14 @@ static void flush(void) {
 }
 
 static void stop(void) {
-  pthread_cleanup_debug_mutex_lock(&alsa_mutex, 10000, 1);
+  pthread_cleanup_debug_mutex_lock(&alsa_mutex, 10000, 4);
   if (alsa_backend_state != abm_disconnected) { // must be playing or connected...
     if (config.keep_dac_busy == 0) {
       do_close();
     }
   } else
     debug(3, "alsa: stop() -- called on a disconnected alsa backend");
-  debug_mutex_unlock(&alsa_mutex, 3);
+  debug_mutex_unlock(&alsa_mutex, 4);
   pthread_cleanup_pop(0); // release the mutex
 }
 
@@ -2301,7 +2362,7 @@ static void *alsa_buffer_monitor_thread_code(__attribute__((unused)) void *arg) 
   //  #include <syscall.h>
   //  debug(1, "alsa_buffer_monitor_thread_code PID %d", syscall(SYS_gettid));
   // Wait until the output configuration has been set by the main program
-  debug(2, "alsa: alsa_buffer_monitor_thread_code started.");
+  debug(1, "alsa: alsa_buffer_monitor_thread_code started.");
   int frame_count = 0;
   int error_count = 0;
   int error_detected = 0;
@@ -2466,7 +2527,8 @@ static int32_t get_configuration(unsigned int channels, unsigned int rate, unsig
 
   // first, check that the device is there!
   snd_pcm_t *temp_alsa_handle = NULL;
-  int response = snd_pcm_open(&temp_alsa_handle, alsa_out_dev, SND_PCM_STREAM_PLAYBACK, 0);
+  int mode = vbot_open_alsa ? 0 : SND_PCM_NONBLOCK;
+  int response = snd_pcm_open(&temp_alsa_handle, alsa_out_dev, SND_PCM_STREAM_PLAYBACK, mode);
   ;
   if ((response == 0) && (temp_alsa_handle != NULL)) {
     response = snd_pcm_close(temp_alsa_handle);
@@ -2489,14 +2551,4 @@ static int32_t get_configuration(unsigned int channels, unsigned int rate, unsig
   if (response == 0)
     response = search_for_suitable_configuration(channels, rate, format, &check_configuration);
   return response;
-}
-
-// VBot: Hàm wrapper để mở ALSA device từ D-Bus
-int vbot_alsa_open(__attribute__((unused)) int do_auto_setup) {
-  return do_open();
-}
-
-// VBot: Hàm wrapper để đóng ALSA device từ D-Bus
-int vbot_alsa_close(void) {
-  return do_close();
 }
