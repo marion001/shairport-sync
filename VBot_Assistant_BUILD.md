@@ -1,6 +1,6 @@
-	#Bản Build: 5.0.4
+	#Bản Build: 5.1
 	
-	#Ngày Build: 02/05/2026
+	#Ngày Build: 06/07/2026
 	
 	Các File Can Thiệp:
 		- audio_alsa.c
@@ -56,6 +56,10 @@ install_airplay_v3.sh: Trình cài đặt chính mạnh mẽ thực hiện tất
 #Kiểm tra cái nào đang chiếm quyền sử dụng alsa
 
     $:> sudo lsof /dev/snd/*
+
+#Kiểm tra phiên bản shairport-sync
+
+	$:> shairport-sync -V
 
 #Chạy shairport thủ công xem logs
 
