@@ -1,7 +1,7 @@
 /*
  * libalsa output driver. This file is part of Shairport.
  * Copyright (c) Muffinman, Skaman 2013
- * Copyright (c) Mike Brady 2014--2025
+ * Copyright (c) Mike Brady 2014--2026
  * All rights reserved.
  *
  * Permission is hereby granted, free of charge, to any person
@@ -149,9 +149,7 @@ pthread_t alsa_buffer_monitor_thread;
 int mute_requested_externally = 0;
 int mute_requested_internally = 0;
 
-/* VBot globals: control silent mode, ALSA open mode and volume factor */
 volatile int vbot_shairport_silent_mode = 0;
-/* 1 = allow exclusive/blocking open (default in old source), 0 = use non-blocking/open-shared */
 volatile int vbot_open_alsa = 1;
 float vbot_volume_factor = 1.0f;
 
@@ -218,9 +216,10 @@ void handle_unfixable_error(int errorCode) {
     if (config.cmd_unfixable) {
       command_execute(config.cmd_unfixable, messageString, 1);
     } else {
-      die("An unrecoverable error, \"output_device_error_%d\", has been "
-          "detected. Doing an emergency exit, as no run_this_if_an_unfixable_error_is_detected "
-          "program.",
+      pthread_mutex_unlock(&alsa_mutex); // release the alsa mutex to allow a clean exit
+      die("an unrecoverable error, \"output_device_error_%d\", has been "
+          "detected. Doing an emergency exit, as no \"run_this_if_an_unfixable_error_is_detected\" "
+          "handler has been provided.",
           errorCode);
     }
   }
@@ -252,11 +251,9 @@ static int get_permissible_configuration_settings() {
     snd_pcm_hw_params_alloca(&local_alsa_params);
     snd_pcm_info_t *local_alsa_info;
     snd_pcm_info_alloca(&local_alsa_info);
-    pthread_cleanup_debug_mutex_lock(&alsa_mutex, 50000, 0);
+    pthread_mutex_lock_and_cleanup_push(&alsa_mutex);
     snd_pcm_t *temporary_alsa_handle = NULL;
-    /* VBot: allow switching to non-blocking open when vbot_open_alsa == 0 */
-    int mode = vbot_open_alsa ? 0 : SND_PCM_NONBLOCK;
-    ret = snd_pcm_open(&temporary_alsa_handle, alsa_out_dev, SND_PCM_STREAM_PLAYBACK, mode);
+    ret = snd_pcm_open(&temporary_alsa_handle, alsa_out_dev, SND_PCM_STREAM_PLAYBACK, 0);
     if (ret == 0) {
       snd_pcm_type_t device_type = snd_pcm_type(temporary_alsa_handle);
       ret = snd_pcm_info(temporary_alsa_handle, local_alsa_info);
@@ -709,13 +706,11 @@ static int actual_open_alsa_device() {
     snd_pcm_uframes_t actual_buffer_length_in_frames;
     snd_pcm_access_t access;
 
-    /* VBot: respect vbot_open_alsa when opening the real device */
-    int mode = vbot_open_alsa ? 0 : SND_PCM_NONBLOCK;
-    ret = snd_pcm_open(&alsa_handle, alsa_out_dev, SND_PCM_STREAM_PLAYBACK, mode);
+    ret = snd_pcm_open(&alsa_handle, alsa_out_dev, SND_PCM_STREAM_PLAYBACK, 0);
     // EHOSTDOWN seems to signify that it's a PipeWire pseudo device that can't be accessed by this
     // user. So, try the first device ALSA device and log it.
     if ((ret == -EHOSTDOWN) && (strcmp(alsa_out_dev, "default") == 0)) {
-    ret = snd_pcm_open(&alsa_handle, "hw:0", SND_PCM_STREAM_PLAYBACK, mode);
+      ret = snd_pcm_open(&alsa_handle, "hw:0", SND_PCM_STREAM_PLAYBACK, 0);
       if ((ret == 0) || (ret == -EBUSY)) {
         // being busy should be okay
         inform("the default ALSA device is inaccessible -- \"hw:0\" used instead.");
@@ -1071,7 +1066,7 @@ static int prepare_mixer() {
 
     // Now, start trying to initialise the alsa device with the settings
     // obtained
-    pthread_cleanup_debug_mutex_lock(&alsa_mixer_mutex, 1000, 1);
+    pthread_mutex_lock_and_cleanup_push(&alsa_mixer_mutex);
     if (open_mixer() == 0) {
       if (snd_mixer_selem_get_playback_volume_range(alsa_mix_elem, &alsa_mix_minv, &alsa_mix_maxv) <
           0) {
@@ -1157,7 +1152,7 @@ static int prepare_mixer() {
       if (response == 0)
         response = close_mixer();
     }
-    debug_mutex_unlock(&alsa_mixer_mutex, 3); // release the mutex
+    pthread_mutex_unlock(&alsa_mixer_mutex); // release the mutex
     pthread_cleanup_pop(0);
     pthread_setcancelstate(oldState, NULL);
   }
@@ -1603,7 +1598,7 @@ static int configure(int32_t requested_encoded_format, char **channel_map) {
   int response = 0;
   int oldState;
   pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &oldState); // make this un-cancellable
-  pthread_cleanup_debug_mutex_lock(&alsa_mutex, 200000, 0);
+  pthread_mutex_lock_and_cleanup_push(&alsa_mutex);
   if (current_encoded_output_format != requested_encoded_format) {
     if (current_encoded_output_format == 0)
       debug(2, "alsa: setting output configuration to %s.",
@@ -1620,7 +1615,7 @@ static int configure(int32_t requested_encoded_format, char **channel_map) {
   if ((response == 0) && (channel_map != NULL)) {
     *channel_map = get_channel_map_str();
   }
-  debug_mutex_unlock(&alsa_mutex, 0);
+  pthread_mutex_unlock(&alsa_mutex);
   pthread_cleanup_pop(0);
   pthread_setcancelstate(oldState, NULL);
   if (response != 0)
@@ -1633,7 +1628,7 @@ static void deinit(void) {
   int oldState;
   pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &oldState); // make this un-cancellable
   debug(2, "audio_alsa deinit called.");
-  pthread_cleanup_debug_mutex_lock(&alsa_mutex, 10000, 1);
+  pthread_mutex_lock_and_cleanup_push(&alsa_mutex);
   if (alsa_handle != NULL) {
     debug(3, "alsa: closing the output device.");
     do_close();
@@ -1657,7 +1652,7 @@ static int set_mute_state() {
   int response = 1; // some problem expected, e.g. no mixer or not allowed to use it or disconnected
   int oldState;
   pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &oldState); // make this un-cancellable
-  pthread_cleanup_debug_mutex_lock(&alsa_mixer_mutex, 10000, 0);
+  pthread_mutex_lock_and_cleanup_push(&alsa_mixer_mutex);
   if ((alsa_backend_state != abm_disconnected) && (config.alsa_use_hardware_mute == 1) &&
       (open_mixer() == 0)) {
     response = 0; // okay if actually using the mute facility
@@ -1684,7 +1679,7 @@ static int set_mute_state() {
     }
     close_mixer();
   }
-  debug_mutex_unlock(&alsa_mixer_mutex, 4); // release the mutex
+  pthread_mutex_unlock(&alsa_mixer_mutex); // release the mutex
   pthread_cleanup_pop(0);                   // release the mutex
   pthread_setcancelstate(oldState, NULL);
   return response;
@@ -1920,11 +1915,11 @@ static int delay(long *the_delay) {
   snd_pcm_state_t state;
 
   pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &oldState); // make this un-cancellable
-  pthread_cleanup_debug_mutex_lock(&alsa_mutex, 10000, 0);
+  pthread_mutex_lock_and_cleanup_push(&alsa_mutex);
 
   ret = delay_and_status(&state, &my_delay, NULL);
 
-  debug_mutex_unlock(&alsa_mutex, 0);
+  pthread_mutex_unlock(&alsa_mutex);
   pthread_cleanup_pop(0);
   pthread_setcancelstate(oldState, NULL);
 
@@ -1951,7 +1946,7 @@ static int stats(uint64_t *raw_measurement_time, uint64_t *corrected_measurement
   snd_pcm_sframes_t my_delay = 0; // this initialisation is to silence a clang warning
 
   pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &oldState); // make this un-cancellable
-  pthread_cleanup_debug_mutex_lock(&alsa_mutex, 10000, 0);
+  pthread_mutex_lock_and_cleanup_push(&alsa_mutex);
 
   if (alsa_handle == NULL) {
     ret = alsa_handle_status;
@@ -1968,7 +1963,7 @@ static int stats(uint64_t *raw_measurement_time, uint64_t *corrected_measurement
   frames_sent_break_occurred = 0; // reset it.
   if (frames_sent_to_dac != NULL)
     *frames_sent_to_dac = frames_sent_for_playing;
-  debug_mutex_unlock(&alsa_mutex, 0);
+  pthread_mutex_unlock(&alsa_mutex);
   pthread_cleanup_pop(0);
   pthread_setcancelstate(oldState, NULL);
   uint64_t hd = my_delay; // note: snd_pcm_sframes_t is a long
@@ -1993,100 +1988,50 @@ static int do_play(void *buf, int samples) {
     if (ret == 0) { // will be non-zero if an error or a stall
       // just check the state of the DAC
 
-      if ((state != SND_PCM_STATE_PREPARED) && (state != SND_PCM_STATE_RUNNING) &&
-          (state != SND_PCM_STATE_XRUN)) {
-        debug(1, "alsa: DAC in odd SND_PCM_STATE_* %d prior to writing.", state);
+      if ((state != SND_PCM_STATE_PREPARED) && (state != SND_PCM_STATE_RUNNING)) {
+        debug(1, "alsa: DAC in unexpected state %s prior to writing.", snd_pcm_state_name(state));
       }
       if (state == SND_PCM_STATE_XRUN) {
-        debug(1, "alsa: DAC in SND_PCM_STATE_XRUN prior to writing.");
         ret = snd_pcm_recover(alsa_handle, ret, 1);
       }
 
       snd_pcm_state_t prior_state = state; // keep this for afterwards....
       debug(4, "alsa: write %d frames.", samples);
-
-      /* VBot: software mute / software volume factor
-       * If vbot_shairport_silent_mode is set, send silence instead of buf.
-       * If vbot_volume_factor != 1.0, scale samples (for common sample sizes).
-       */
-      void *write_buf = buf;
-      void *procbuf = NULL;
+      void *write_buffer = buf;
+      void *processed_buffer = NULL;
       if ((vbot_shairport_silent_mode != 0) || (vbot_volume_factor != 1.0f)) {
         int channels = CHANNELS_FROM_ENCODED_FORMAT(current_encoded_output_format);
-        sps_format_t fmt = (sps_format_t)FORMAT_FROM_ENCODED_FORMAT(current_encoded_output_format);
-        int sample_bytes = 1;
-        if ((fmt >= 0) && (fmt <= SPS_FORMAT_HIGHEST_NATIVE))
-          sample_bytes = fr[fmt].sample_size;
-        size_t bytes = (size_t)samples * (size_t)channels * (size_t)sample_bytes;
-        procbuf = malloc(bytes);
-        if (procbuf != NULL) {
+        sps_format_t format = FORMAT_FROM_ENCODED_FORMAT(current_encoded_output_format);
+        int sample_bytes = ((format >= 0) && (format <= SPS_FORMAT_HIGHEST_NATIVE))
+                               ? fr[format].sample_size
+                               : 0;
+        size_t byte_count = (size_t)samples * (size_t)channels * (size_t)sample_bytes;
+        processed_buffer = malloc(byte_count);
+        if (processed_buffer != NULL) {
           if (vbot_shairport_silent_mode != 0) {
-            memset(procbuf, 0, bytes);
+            memset(processed_buffer, 0, byte_count);
+          } else if (sample_bytes == 2) {
+            int16_t *input = buf;
+            int16_t *processed_samples = processed_buffer;
+            for (int i = 0; i < samples * channels; i++)
+              processed_samples[i] = (int16_t)lrintf((float)input[i] * vbot_volume_factor);
+          } else if (sample_bytes == 4) {
+            int32_t *input = buf;
+            int32_t *processed_samples = processed_buffer;
+            for (int i = 0; i < samples * channels; i++)
+              processed_samples[i] =
+                  (int32_t)llrint((double)input[i] * vbot_volume_factor);
           } else {
-            /* apply simple scaling for 16-bit and 32-bit samples, basic support for 24-bit */
-            if (sample_bytes == 2) {
-              int total = samples * channels;
-              int16_t *in = (int16_t *)buf;
-              int16_t *out = (int16_t *)procbuf;
-              for (int i = 0; i < total; i++) {
-                int32_t v = in[i];
-                v = (int32_t)floorf((float)v * vbot_volume_factor + 0.5f);
-                if (v > INT16_MAX)
-                  v = INT16_MAX;
-                else if (v < INT16_MIN)
-                  v = INT16_MIN;
-                out[i] = (int16_t)v;
-              }
-            } else if (sample_bytes == 4) {
-              int total = samples * channels;
-              int32_t *in = (int32_t *)buf;
-              int32_t *out = (int32_t *)procbuf;
-              for (int i = 0; i < total; i++) {
-                /* assume native 32-bit signed samples */
-                int64_t v = in[i];
-                v = (int64_t)llround((double)v * (double)vbot_volume_factor);
-                if (v > INT32_MAX)
-                  v = INT32_MAX;
-                else if (v < INT32_MIN)
-                  v = INT32_MIN;
-                out[i] = (int32_t)v;
-              }
-            } else if (sample_bytes == 3) {
-              /* 24-bit little endian packed into 3 bytes */
-              unsigned char *in = (unsigned char *)buf;
-              unsigned char *out = (unsigned char *)procbuf;
-              int total = samples * channels;
-              for (int i = 0; i < total; i++) {
-                int offset = i * 3;
-                int32_t v = in[offset] | (in[offset + 1] << 8) | (in[offset + 2] << 16);
-                /* sign extend */
-                if (v & 0x800000)
-                  v |= 0xFF000000;
-                int64_t vv = (int64_t)llround((double)v * (double)vbot_volume_factor);
-                if (vv > 0x7FFFFF)
-                  vv = 0x7FFFFF;
-                else if (vv < -0x800000)
-                  vv = -0x800000;
-                int32_t vout = (int32_t)vv;
-                out[offset] = vout & 0xFF;
-                out[offset + 1] = (vout >> 8) & 0xFF;
-                out[offset + 2] = (vout >> 16) & 0xFF;
-              }
-            } else {
-              /* unknown sample size: fallback to copying without scaling */
-              memcpy(procbuf, buf, bytes);
-            }
+            memcpy(processed_buffer, buf, byte_count);
           }
-          write_buf = procbuf;
+          write_buffer = processed_buffer;
         } else {
-          debug(1, "VBot: could not allocate processing buffer for software volume/mute");
+          debug(1, "VBot: could not allocate buffer for software volume/mute");
         }
       }
 
-      ret = alsa_pcm_write(alsa_handle, write_buf, samples);
-
-      if (procbuf)
-        free(procbuf);
+      ret = alsa_pcm_write(alsa_handle, write_buffer, samples);
+      free(processed_buffer);
       if (ret == -EIO) {
         debug(1, "alsa: I/O Error.");
         usleep(20000); // give it a breather...
@@ -2142,13 +2087,10 @@ static int do_play(void *buf, int samples) {
 }
 
 static int do_open() {
-  // VBot: kiểm tra chế độ mở ALSA
-  extern volatile int vbot_open_alsa;
-  if (!vbot_open_alsa) {
-    debug(1, "do_open() BI CHAN vi vbot_open_alsa = 0 -> KHONG mo ALSA");
-    return -EACCES; /* caller should ignore this and not try to open ALSA */
+  if (vbot_open_alsa == 0) {
+    debug(1, "VBot: ALSA open blocked by DisableOpenALSA");
+    return -EACCES;
   }
-
   int ret = 0;
   if (alsa_backend_state != abm_disconnected)
     debug(1, "alsa: do_open() -- asking to open the output device when it is already "
@@ -2206,10 +2148,21 @@ static int do_close() {
   return derr;
 }
 
-/* VBot helper wrappers to allow external control (called from D-Bus handlers) */
-int vbot_alsa_open(int do_auto_setup) { (void)do_auto_setup; return do_open(); }
+int vbot_alsa_open(void) {
+  int result;
+  pthread_mutex_lock(&alsa_mutex);
+  result = do_open();
+  pthread_mutex_unlock(&alsa_mutex);
+  return result;
+}
 
-int vbot_alsa_close(void) { return do_close(); }
+int vbot_alsa_close(void) {
+  int result;
+  pthread_mutex_lock(&alsa_mutex);
+  result = do_close();
+  pthread_mutex_unlock(&alsa_mutex);
+  return result;
+}
 
 static int sub_flush() {
   if (alsa_backend_state == abm_disconnected)
@@ -2245,7 +2198,7 @@ static int play(void *buf, int samples, __attribute__((unused)) int sample_type,
 
   int ret = 0;
 
-  pthread_cleanup_debug_mutex_lock(&alsa_mutex, 50000, 0);
+  pthread_mutex_lock_and_cleanup_push(&alsa_mutex);
 
   if (alsa_backend_state == abm_disconnected) {
     ret = do_open();
@@ -2267,13 +2220,13 @@ static int play(void *buf, int samples, __attribute__((unused)) int sample_type,
     ret = do_play(buf, samples);
   }
 
-  debug_mutex_unlock(&alsa_mutex, 0);
+  pthread_mutex_unlock(&alsa_mutex);
   pthread_cleanup_pop(0); // release the mutex
   return ret;
 }
 
 static void flush(void) {
-  pthread_cleanup_debug_mutex_lock(&alsa_mutex, 10000, 4);
+  pthread_mutex_lock_and_cleanup_push(&alsa_mutex);
   if (alsa_backend_state != abm_disconnected) { // must be playing or connected...
     // do nothing for a flush if config.keep_dac_busy is true
     if (config.keep_dac_busy == 0) {
@@ -2282,19 +2235,19 @@ static void flush(void) {
   } else {
     debug(3, "alsa: flush() -- called on a disconnected alsa backend");
   }
-  debug_mutex_unlock(&alsa_mutex, 4);
+  pthread_mutex_unlock(&alsa_mutex);
   pthread_cleanup_pop(0); // release the mutex
 }
 
 static void stop(void) {
-  pthread_cleanup_debug_mutex_lock(&alsa_mutex, 10000, 4);
+  pthread_mutex_lock_and_cleanup_push(&alsa_mutex);
   if (alsa_backend_state != abm_disconnected) { // must be playing or connected...
     if (config.keep_dac_busy == 0) {
       do_close();
     }
   } else
     debug(3, "alsa: stop() -- called on a disconnected alsa backend");
-  debug_mutex_unlock(&alsa_mutex, 4);
+  pthread_mutex_unlock(&alsa_mutex);
   pthread_cleanup_pop(0); // release the mutex
 }
 
@@ -2304,7 +2257,7 @@ static void do_volume(double vol) { // caller is assumed to have the alsa_mutex 
   int oldState;
   pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &oldState); // make this un-cancellable
   set_volume = vol;
-  pthread_cleanup_debug_mutex_lock(&alsa_mixer_mutex, 1000, 4);
+  pthread_mutex_lock_and_cleanup_push(&alsa_mixer_mutex);
   if (volume_set_request && (open_mixer() == 0)) {
     if (has_softvol) {
       if (ctl && elem_id) {
@@ -2334,7 +2287,7 @@ static void do_volume(double vol) { // caller is assumed to have the alsa_mutex 
     volume_set_request = 0; // any external request that has been made is now satisfied
     close_mixer();
   }
-  debug_mutex_unlock(&alsa_mixer_mutex, 4);
+  pthread_mutex_unlock(&alsa_mixer_mutex);
   pthread_cleanup_pop(0); // release the mutex
   pthread_setcancelstate(oldState, NULL);
 }
@@ -2407,7 +2360,7 @@ static void *alsa_buffer_monitor_thread_code(__attribute__((unused)) void *arg) 
             "alsa_buffer_monitor_thread_code sleep was %.6f sec but request was for %.6f sec. "
             "Disabling standby may not work properly!",
             sleep_time_actual_ns * 0.000000001, config.disable_standby_mode_silence_scan_interval);
-    pthread_cleanup_debug_mutex_lock(&alsa_mutex, 200000, 0);
+    pthread_mutex_lock_and_cleanup_push(&alsa_mutex);
     // check possible state transitions here
     if ((alsa_backend_state == abm_disconnected) && (config.keep_dac_busy != 0)) {
       // open the dac and move to abm_connected mode
@@ -2513,7 +2466,7 @@ static void *alsa_buffer_monitor_thread_code(__attribute__((unused)) void *arg) 
         }
       }
     }
-    debug_mutex_unlock(&alsa_mutex, 0);
+    pthread_mutex_unlock(&alsa_mutex);
     pthread_cleanup_pop(0); // release the mutex
     uint64_t tsb = get_absolute_time_in_ns();
     usleep(sleep_time_us); // has a cancellation point in it
@@ -2527,8 +2480,7 @@ static int32_t get_configuration(unsigned int channels, unsigned int rate, unsig
 
   // first, check that the device is there!
   snd_pcm_t *temp_alsa_handle = NULL;
-  int mode = vbot_open_alsa ? 0 : SND_PCM_NONBLOCK;
-  int response = snd_pcm_open(&temp_alsa_handle, alsa_out_dev, SND_PCM_STREAM_PLAYBACK, mode);
+  int response = snd_pcm_open(&temp_alsa_handle, alsa_out_dev, SND_PCM_STREAM_PLAYBACK, 0);
   ;
   if ((response == 0) && (temp_alsa_handle != NULL)) {
     response = snd_pcm_close(temp_alsa_handle);

@@ -44,13 +44,15 @@
 #include "metadata/hub.h"
 
 #include "dbus-service.h"
+#include "utilities/exit.h"
 
-// VBot: ALSA control externs (implemented in audio_alsa.c)
+#ifdef CONFIG_ALSA
 extern volatile int vbot_shairport_silent_mode;
 extern volatile int vbot_open_alsa;
 extern float vbot_volume_factor;
-extern int vbot_alsa_open(int do_auto_setup);
+extern int vbot_alsa_open(void);
 extern int vbot_alsa_close(void);
+#endif
 
 #ifdef CONFIG_CONVOLUTION
 #include <FFTConvolver/convolver.h>
@@ -496,13 +498,15 @@ static gboolean on_handle_set_airplay_volume(ShairportSyncRemoteControl *skeleto
   return TRUE;
 }
 
-/* VBot: D-Bus handlers for VBot-specific commands */
-
 static gboolean on_handle_mute(ShairportSyncRemoteControl *skeleton,
                                GDBusMethodInvocation *invocation,
                                __attribute__((unused)) gpointer user_data) {
+#ifdef CONFIG_ALSA
   vbot_shairport_silent_mode = 1;
   debug(1, "VBot: Mute command received - silent mode enabled");
+#else
+  debug(1, "VBot: Mute command ignored because ALSA support is not enabled");
+#endif
   shairport_sync_remote_control_complete_mute(skeleton, invocation);
   return TRUE;
 }
@@ -510,8 +514,12 @@ static gboolean on_handle_mute(ShairportSyncRemoteControl *skeleton,
 static gboolean on_handle_unmute(ShairportSyncRemoteControl *skeleton,
                                  GDBusMethodInvocation *invocation,
                                  __attribute__((unused)) gpointer user_data) {
+#ifdef CONFIG_ALSA
   vbot_shairport_silent_mode = 0;
   debug(1, "VBot: Unmute command received - silent mode disabled");
+#else
+  debug(1, "VBot: Unmute command ignored because ALSA support is not enabled");
+#endif
   shairport_sync_remote_control_complete_unmute(skeleton, invocation);
   return TRUE;
 }
@@ -520,14 +528,17 @@ static gboolean on_handle_change_volume(ShairportSyncRemoteControl *skeleton,
                                         GDBusMethodInvocation *invocation,
                                         const gdouble volume_value,
                                         __attribute__((unused)) gpointer user_data) {
+#ifdef CONFIG_ALSA
   vbot_volume_factor = (float)(volume_value / 100.0);
-  if (vbot_volume_factor < 0.0f) vbot_volume_factor = 0.0f;
-  if (vbot_volume_factor > 1.0f) vbot_volume_factor = 1.0f;
-#ifdef CONFIG_DACP_CLIENT
-  dacp_set_volume((int)volume_value);
-#endif
+  if (vbot_volume_factor < 0.0f)
+    vbot_volume_factor = 0.0f;
+  if (vbot_volume_factor > 1.0f)
+    vbot_volume_factor = 1.0f;
   debug(1, "VBot: ChangeVolume command received - volume set to %.0f, factor: %.3f",
         volume_value, vbot_volume_factor);
+#else
+  debug(1, "VBot: ChangeVolume command ignored because ALSA support is not enabled");
+#endif
   shairport_sync_remote_control_complete_change_volume(skeleton, invocation);
   return TRUE;
 }
@@ -535,20 +546,16 @@ static gboolean on_handle_change_volume(ShairportSyncRemoteControl *skeleton,
 static gboolean on_handle_enable_open_alsa(ShairportSyncRemoteControl *skeleton,
                                            GDBusMethodInvocation *invocation,
                                            __attribute__((unused)) gpointer user_data) {
-  debug(1, "VBot: EnableOpenALSA command received - setting exclusive mode");
-  if (vbot_open_alsa == 1) {
-    debug(1, "VBot: Exclusive mode already enabled");
-    shairport_sync_remote_control_complete_enable_open_alsa(skeleton, invocation);
-    return TRUE;
+#ifdef CONFIG_ALSA
+  if (vbot_open_alsa == 0) {
+    vbot_open_alsa = 1;
+    vbot_alsa_close();
+    vbot_alsa_open();
+    debug(1, "VBot: EnableOpenALSA command received - ALSA opened");
   }
-  vbot_open_alsa = 1;
-  debug(1, "VBot: Exclusive mode enabled - vbot_open_alsa = 1");
-
-  debug(1, "VBot: Closing device to apply exclusive mode...");
-  vbot_alsa_close();
-  debug(1, "VBot: Reopening device in exclusive mode...");
-  vbot_alsa_open(0);
-
+#else
+  debug(1, "VBot: EnableOpenALSA command ignored because ALSA support is not enabled");
+#endif
   shairport_sync_remote_control_complete_enable_open_alsa(skeleton, invocation);
   return TRUE;
 }
@@ -556,20 +563,15 @@ static gboolean on_handle_enable_open_alsa(ShairportSyncRemoteControl *skeleton,
 static gboolean on_handle_disable_open_alsa(ShairportSyncRemoteControl *skeleton,
                                             GDBusMethodInvocation *invocation,
                                             __attribute__((unused)) gpointer user_data) {
-  debug(1, "VBot: DisableOpenALSA command received - setting shared mode");
-  if (vbot_open_alsa == 0) {
-    debug(1, "VBot: Shared mode already enabled");
-    shairport_sync_remote_control_complete_disable_open_alsa(skeleton, invocation);
-    return TRUE;
+#ifdef CONFIG_ALSA
+  if (vbot_open_alsa != 0) {
+    vbot_open_alsa = 0;
+    vbot_alsa_close();
+    debug(1, "VBot: DisableOpenALSA command received - ALSA closed and blocked");
   }
-  vbot_open_alsa = 0;
-  debug(1, "VBot: Shared mode enabled - vbot_open_alsa = 0");
-
-  debug(1, "VBot: Closing device to apply shared mode...");
-  vbot_alsa_close();
-  debug(1, "VBot: Reopening device in shared mode...");
-  vbot_alsa_open(0);
-
+#else
+  debug(1, "VBot: DisableOpenALSA command ignored because ALSA support is not enabled");
+#endif
   shairport_sync_remote_control_complete_disable_open_alsa(skeleton, invocation);
   return TRUE;
 }
@@ -1019,9 +1021,8 @@ static gboolean on_handle_quit(ShairportSync *skeleton, GDBusMethodInvocation *i
                                __attribute__((unused)) const gchar *command,
                                __attribute__((unused)) gpointer user_data) {
   debug(1, ">> quit request...");
-  config.quit_requested_from_glib_mainloop = 1;
-  g_main_loop_quit(config.glib_worker_loop);
   shairport_sync_complete_quit(skeleton, invocation);
+  exit_request(EXIT_SUCCESS);
   return TRUE;
 }
 
@@ -1175,12 +1176,10 @@ static void on_dbus_name_acquired(GDBusConnection *connection, const gchar *name
                    G_CALLBACK(on_handle_volume_down), NULL);
   g_signal_connect(shairportSyncRemoteControlSkeleton, "handle-set-airplay-volume",
                    G_CALLBACK(on_handle_set_airplay_volume), NULL);
-
-  /* VBot: Connect VBot-specific D-Bus method handlers */
   g_signal_connect(shairportSyncRemoteControlSkeleton, "handle-mute", G_CALLBACK(on_handle_mute),
                    NULL);
-  g_signal_connect(shairportSyncRemoteControlSkeleton, "handle-unmute", G_CALLBACK(on_handle_unmute),
-                   NULL);
+  g_signal_connect(shairportSyncRemoteControlSkeleton, "handle-unmute",
+                   G_CALLBACK(on_handle_unmute), NULL);
   g_signal_connect(shairportSyncRemoteControlSkeleton, "handle-change-volume",
                    G_CALLBACK(on_handle_change_volume), NULL);
   g_signal_connect(shairportSyncRemoteControlSkeleton, "handle-enable-open-alsa",

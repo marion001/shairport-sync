@@ -42,12 +42,11 @@
     <property name="FileAndLine" type="b" access="readwrite" />
   </interface>  
   <interface name="org.gnome.ShairportSync.RemoteControl">
-    <method name='FastForward'/>
+		<method name='FastForward'/>
 		<method name='Rewind'/>
 		<method name='ToggleMute'/>
-    <!-- VBot extensions -->
-    <method name='Mute'/>
-    <method name='Unmute'/>
+		<method name='Mute'/>
+		<method name='Unmute'/>
     <method name='ChangeVolume'>
       <arg name="volume_value" type="d" direction="in" />
     </method>
