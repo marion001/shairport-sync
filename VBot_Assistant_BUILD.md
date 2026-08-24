@@ -1,122 +1,214 @@
-	#Bản Build: 5.1
-	
-	#Ngày Build: 06/07/2026
-	
-	Các File Can Thiệp:
-		- audio_alsa.c
-		- dbus-service.c
-		- org.gnome.ShairportSync.xml
-		- verify-gitversion	(Thay Đổi Phiên Bản Build)
-		- audio_alsa_vbot.h	(Tạo Mới File)
+# VBot Assistant – Build Shairport Sync v5.2.2
 
-GitHub: https://github.com/marion001/shairport-sync
-GitHub Source Gốc: https://github.com/mikebrady/shairport-sync
+Tài liệu này hướng dẫn build và cài đặt Shairport Sync v5.2.2 có phần mở rộng VBot Assistant trên Raspberry Pi OS/Debian. Bản sửa bổ sung năm phương thức D-Bus để tắt tiếng, điều chỉnh âm lượng phần mềm và đóng/mở thiết bị ALSA.
 
-Dự án này sử dụng hệ thống hai tập lệnh để cài đặt an toàn và đáng tin cậy:
+## 1. Các file đã tùy biến
 
-    $:> dos2unix install_airplay_v3.sh
-    $:> dos2unix pre_check_airplay_on_pi.sh
+- `org.gnome.ShairportSync.xml`: khai báo năm phương thức D-Bus.
+- `dbus-service.c`: nhận lệnh D-Bus và điều khiển phần ALSA.
+- `audio_alsa.c`: xử lý mute, volume phần mềm và quyền mở ALSA.
 
-pre_check_airplay_on_pi.sh: Một tập lệnh không xâm phạm, kiểm tra hệ thống của bạn về các sự cố thường gặp mà không thực hiện bất kỳ thay đổi nào. Nếu tất cả các kiểm tra đều đạt, nó sẽ tự động tải xuống và chạy trình cài đặt chính.
+Không chỉnh sửa trực tiếp `dbus-interface.c` hoặc `dbus-interface.h`. Hai file này được `gdbus-codegen` tự động tạo từ XML trong lúc build.
 
-install_airplay_v3.sh: Trình cài đặt chính mạnh mẽ thực hiện tất cả các hành động cần thiết để xây dựng và cấu hình phần mềm AirPlay 2 (Shairport-Sync và nqptp).
+## 2. Cài thư viện build
 
-#Cài Bổ Sung Thư Viện:
+```bash
+sudo apt update
+sudo apt install --no-install-recommends \
+  build-essential git autoconf automake libtool pkg-config \
+  libpopt-dev libconfig-dev libasound2-dev \
+  avahi-daemon libavahi-client-dev \
+  libssl-dev libsoxr-dev libglib2.0-dev \
+  libmosquitto-dev \
+  libplist-dev libplist-utils libsodium-dev uuid-dev libgcrypt-dev xxd \
+  libavutil-dev libavcodec-dev libavformat-dev
+```
 
-    $:> sudo apt install libplist-utils
+Nếu không cần MQTT, có thể bỏ `--with-mqtt-client` khi configure và không cần cài thư viện MQTT tương ứng. Nếu configure báo thiếu thư viện, đọc dòng `configure: error` cuối cùng và cài gói `-dev` được yêu cầu.
 
-#Cài Bổ Sung Thư Viện Đầy Đủ:
+## 3. Chuẩn bị source
 
-    $:> sudo apt install --no-install-recommends build-essential git autoconf automake libtool \
-        libpopt-dev libconfig-dev libasound2-dev avahi-daemon libavahi-client-dev libssl-dev libsoxr-dev \
-        libplist-dev libsodium-dev uuid-dev libgcrypt-dev xxd libplist-utils \
-        libavutil-dev libavcodec-dev libavformat-dev
+```bash
+cd /duong-dan/toi/shairport-sync-master
+chmod +x verify-gitversion
+dos2unix verify-gitversion
+```
 
-#Build lại shairport:
+Source tải dưới dạng ZIP không có thư mục `.git`, vì vậy `shairport-sync -V` có thể hiển thị phần git revision là `NA`. Phiên bản chính thức vẫn được khai báo là `5.2.2` trong `configure.ac`.
 
-    $:> cd shairport-sync
-    $:> chmod +x verify-gitversion
-    $:> dos2unix verify-gitversion
-    $:> make clean
-    $:> autoreconf -fi
-    $:> ./configure --with-mqtt-client --sysconfdir=/etc --with-alsa \
-        --with-soxr --with-avahi --with-dbus-interface --with-ssl=openssl --with-systemd-startup --with-airplay-2
-        
-    $:> make
-    $:> sudo make install
-    
-    $:> sudo systemctl daemon-reload
-    $:> sudo systemctl restart shairport-sync
-    $:> sudo systemctl status shairport-sync
+## 4. Configure và build
 
-#Tạm dừng shairport khi đang chạy tự động
+```bash
+make clean 2>/dev/null || true
+autoreconf -fi
 
-    $:> sudo systemctl stop shairport-sync
+./configure \
+  --sysconfdir=/etc \
+  --with-alsa \
+  --with-soxr \
+  --with-avahi \
+  --with-dbus-interface \
+  --with-ssl=openssl \
+  --with-systemd-startup \
+  --with-airplay-2 \
+  --with-mqtt-client
 
-#Kiểm tra cái nào đang chiếm quyền sử dụng alsa
+make -j"$(nproc)"
+sudo make install
+```
 
-    $:> sudo lsof /dev/snd/*
+`--with-alsa` và `--with-dbus-interface` là hai tùy chọn bắt buộc đối với các lệnh VBot trong tài liệu này.
 
-#Kiểm tra phiên bản shairport-sync
+## 5. Khởi động dịch vụ
 
-	$:> shairport-sync -V
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now shairport-sync
+sudo systemctl status shairport-sync --no-pager
+```
 
-#Chạy shairport thủ công xem logs
+Theo dõi log trực tiếp:
 
-    $:> shairport-sync -vv
+```bash
+sudo journalctl -u shairport-sync -f
+```
 
-📋 Useful commands:
+Kiểm tra phiên bản:
 
-       View live logs:    sudo journalctl -u shairport-sync -f
-       Restart service:   sudo systemctl restart shairport-sync
-       Check status:      sudo systemctl status shairport-sync
-       Edit config:       sudo nano /etc/shairport-sync.conf
-       Installation log:  /tmp/airplay_install_20260118_105020.log
+```bash
+shairport-sync -V
+```
 
-DBUS (Mặc Định Các Lệnh Tương Tác Với VBot Assistant):
+## 6. Kiểm tra D-Bus
 
-    #Tắt tiếng VBot Đã sửa Source
-        $:> dbus-send --system --print-reply --dest=org.gnome.ShairportSync /org/gnome/ShairportSync org.gnome.ShairportSync.RemoteControl.Mute
+Xác nhận dịch vụ đã đăng ký trên system bus:
 
-    #Bật tiếng VBot Đã sửa Source
-        $:> dbus-send --system --print-reply --dest=org.gnome.ShairportSync /org/gnome/ShairportSync org.gnome.ShairportSync.RemoteControl.Unmute
+```bash
+gdbus introspect --system \
+  --dest org.gnome.ShairportSync \
+  --object-path /org/gnome/ShairportSync
+```
 
-    #Thay đổi âm lượng VBot Đã sửa Source
-        $:> dbus-send --system --print-reply --dest=org.gnome.ShairportSync /org/gnome/ShairportSync org.gnome.ShairportSync.RemoteControl.ChangeVolume double:10
+Trong interface `org.gnome.ShairportSync.RemoteControl` phải xuất hiện:
 
-	#Thay đổi âm lượng lệnh Gốc
-	# Đặt mức âm lượng hiện tại. Giá trị này phải nằm trong khoảng từ -30.0 đến 0.0 (0.0 mức âm lượng lớn nhấn) Đặt giá trị -144.0 để tắt tiếng. Lưu ý rằng tất cả thao tác này được thực hiện cục bộ trên thiết bị Shairport Sync.
-	# Việc điều chỉnh âm lượng của nguồn âm thanh (ví dụ: iTunes / macOS Music / iOS) sẽ không được cập nhật để phản ánh bất kỳ thay đổi nào.
-		$:> dbus-send --print-reply --system --dest=org.gnome.ShairportSync /org/gnome/ShairportSync org.freedesktop.DBus.Properties.Set string:org.gnome.ShairportSync string:Volume variant:double:-10.0
+- `Mute()`
+- `Unmute()`
+- `ChangeVolume(double volume_value)`
+- `EnableOpenALSA()`
+- `DisableOpenALSA()`
 
-    #Bật quyền mở ALSA (mở ngay VBot Đã sửa Source)
-        $:> dbus-send --system --print-reply --dest=org.gnome.ShairportSync /org/gnome/ShairportSync org.gnome.ShairportSync.RemoteControl.EnableOpenALSA
+## 7. Các lệnh dành cho VBot Assistant
 
-    #Tắt quyền mở ALSA (đóng ngay VBot Đã sửa Source)
-        $:> dbus-send --system --print-reply --dest=org.gnome.ShairportSync /org/gnome/ShairportSync org.gnome.ShairportSync.RemoteControl.DisableOpenALSA
+### Tắt tiếng đầu ra Shairport Sync
 
-    #Lấy mức âm lượng hiện tại. Hàm này trả về giá trị nằm giữa -30.0 và 0.0
-    tương ứng với mức âm lượng trên giao diện người dùng. Nó cũng có thể trả về -144.0 để báo hiệu chế độ tắt tiếng
-    	$:> dbus-send --print-reply --system --dest=org.gnome.ShairportSync /org/gnome/ShairportSync org.freedesktop.DBus.Properties.Get string:org.gnome.ShairportSync string:Volume
-    
-    #Xác định ngưỡng âm lượng
-    	$:> dbus-send --print-reply --system --dest=org.gnome.ShairportSync /org/gnome/ShairportSync org.freedesktop.DBus.Properties.Get string:org.gnome.ShairportSync string:LoudnessThreshold
-    
-    #Lấy trạng thái đang phát hay không
-    	$:> dbus-send --print-reply --system --dest=org.gnome.ShairportSync /org/gnome/ShairportSync org.freedesktop.DBus.Properties.Get string:org.gnome.ShairportSync string:Active
-    
-    #Đặt mức âm lượng hiện tại. Giá trị này nên nằm trong khoảng từ -30.0 đến 0.0
-    Đặt giá trị -144.0 để tắt tiếng. Lưu ý rằng tất cả các thao tác này được thực hiện cục bộ trên thiết bị Shairport Sync
-    Việc điều chỉnh âm lượng của nguồn âm thanh (ví dụ: iTunes / macOS Music / iOS) sẽ không được cập nhật để phản ánh bất kỳ thay đổi nào.
-    	$:> dbus-send --print-reply --system --dest=org.gnome.ShairportSync /org/gnome/ShairportSync org.freedesktop.DBus.Properties.Set string:org.gnome.ShairportSync string:Volume variant:double:-10.0
-    
-    #Hãy dừng phiên phát hiện tại ngay lập tức
-    Shairport Sync sẽ ngừng phát và ngắt kết nối với nguồn âm thanh ngay lập tức
-    Điều này có thể hiển thị dưới dạng lỗi ở nguồn phát.
-    	$:> dbus-send --system --print-reply --type=method_call --dest=org.gnome.ShairportSync '/org/gnome/ShairportSync' org.gnome.ShairportSync.DropSession
-    
-    #Giao thức mà Shairport Sync được thiết kế cho -- AirPlay hoặc AirPlay 2:
-    	$:> dbus-send --print-reply --system --dest=org.gnome.ShairportSync /org/gnome/ShairportSync org.freedesktop.DBus.Properties.Get string:org.gnome.ShairportSync string:Protocol
-    
-    #kiểm tra thông tin các lệnh có thể giao tiếp với dbus:
-        $:> gdbus introspect --system --dest org.gnome.ShairportSync --object-path /org/gnome/ShairportSync
+```bash
+dbus-send --system --print-reply \
+  --dest=org.gnome.ShairportSync \
+  /org/gnome/ShairportSync \
+  org.gnome.ShairportSync.RemoteControl.Mute
+```
+
+### Bật lại tiếng
+
+```bash
+dbus-send --system --print-reply \
+  --dest=org.gnome.ShairportSync \
+  /org/gnome/ShairportSync \
+  org.gnome.ShairportSync.RemoteControl.Unmute
+```
+
+### Đặt âm lượng phần mềm
+
+```bash
+dbus-send --system --print-reply \
+  --dest=org.gnome.ShairportSync \
+  /org/gnome/ShairportSync \
+  org.gnome.ShairportSync.RemoteControl.ChangeVolume double:10
+```
+
+Giá trị đầu vào dùng thang `0..100`:
+
+- `0`: im lặng do hệ số âm lượng bằng 0.
+- `10`: 10% biên độ mẫu PCM.
+- `100`: giữ nguyên biên độ.
+- Giá trị nhỏ hơn 0 được giới hạn thành 0; lớn hơn 100 được giới hạn thành 100.
+
+Đây là phép nhân biên độ PCM, không phải thang dB và không cập nhật thanh âm lượng trên thiết bị phát AirPlay.
+
+### Cho phép và mở ALSA ngay
+
+```bash
+dbus-send --system --print-reply \
+  --dest=org.gnome.ShairportSync \
+  /org/gnome/ShairportSync \
+  org.gnome.ShairportSync.RemoteControl.EnableOpenALSA
+```
+
+### Đóng ALSA ngay và ngăn mở lại
+
+```bash
+dbus-send --system --print-reply \
+  --dest=org.gnome.ShairportSync \
+  /org/gnome/ShairportSync \
+  org.gnome.ShairportSync.RemoteControl.DisableOpenALSA
+```
+
+`DisableOpenALSA` không chuyển ALSA sang chế độ shared/non-blocking. Nó đóng handle hiện tại và chặn các lần mở ALSA tiếp theo cho đến khi nhận `EnableOpenALSA` hoặc tiến trình được khởi động lại.
+
+## 8. Kiểm tra nhanh sau khi cài
+
+```bash
+# Theo dõi log ở terminal thứ nhất
+sudo journalctl -u shairport-sync -f
+
+# Chạy lần lượt ở terminal thứ hai
+dbus-send --system --print-reply --dest=org.gnome.ShairportSync /org/gnome/ShairportSync org.gnome.ShairportSync.RemoteControl.Mute
+dbus-send --system --print-reply --dest=org.gnome.ShairportSync /org/gnome/ShairportSync org.gnome.ShairportSync.RemoteControl.Unmute
+dbus-send --system --print-reply --dest=org.gnome.ShairportSync /org/gnome/ShairportSync org.gnome.ShairportSync.RemoteControl.ChangeVolume double:50
+dbus-send --system --print-reply --dest=org.gnome.ShairportSync /org/gnome/ShairportSync org.gnome.ShairportSync.RemoteControl.DisableOpenALSA
+sudo lsof /dev/snd/*
+dbus-send --system --print-reply --dest=org.gnome.ShairportSync /org/gnome/ShairportSync org.gnome.ShairportSync.RemoteControl.EnableOpenALSA
+```
+
+Mỗi lệnh thành công phải trả về một `method return`. Log phải có dòng bắt đầu bằng `VBot:` tương ứng.
+
+## 9. Xử lý lỗi thường gặp
+
+### `ServiceUnknown` hoặc không tìm thấy `org.gnome.ShairportSync`
+
+```bash
+sudo systemctl status shairport-sync --no-pager
+sudo journalctl -u shairport-sync -n 100 --no-pager
+```
+
+Kiểm tra bản build có dùng `--with-dbus-interface` và tiến trình đang kết nối system bus.
+
+### `UnknownMethod`
+
+Bản binary đang chạy chưa chứa phần mở rộng VBot hoặc chưa được cài lại. Chạy `gdbus introspect`, sau đó kiểm tra đường dẫn binary:
+
+```bash
+command -v shairport-sync
+shairport-sync -V
+```
+
+### ALSA không mở lại
+
+```bash
+sudo lsof /dev/snd/*
+sudo journalctl -u shairport-sync -n 100 --no-pager
+```
+
+Kiểm tra thiết bị có bị tiến trình khác chiếm giữ, tên thiết bị trong `/etc/shairport-sync.conf`, và các lỗi `EBUSY`, `ENOENT` hoặc `ENODEV`.
+
+### Khôi phục trạng thái mặc định
+
+Khởi động lại dịch vụ sẽ đặt lại:
+
+- mute VBot: tắt;
+- hệ số âm lượng VBot: `1.0`;
+- quyền mở ALSA: bật.
+
+```bash
+sudo systemctl restart shairport-sync
+```

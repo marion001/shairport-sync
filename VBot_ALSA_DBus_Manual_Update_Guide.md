@@ -1,259 +1,209 @@
-# Hướng dẫn sửa thủ công cho VBot ALSA / D-Bus
+# Hướng dẫn port VBot ALSA/D-Bus sang phiên bản Shairport Sync mới
 
-Mục đích: cập nhật 3 file cần thiết để thêm hỗ trợ các lệnh D-Bus `Mute`, `Unmute`, `ChangeVolume(double)`, `EnableOpenALSA`, `DisableOpenALSA` và đồng bộ với `audio_alsa.c`.
+Tài liệu này mô tả chính xác các thay đổi đang dùng trên Shairport Sync v5.2.2. Mục đích là hỗ trợ việc đối chiếu và port lại ở các phiên bản sau, không phải thay thế việc review thay đổi upstream.
 
-## 1. `org.gnome.ShairportSync.xml`
+## 1. Hành vi cần giữ nguyên
 
-### Nội dung cần thêm
-Tìm phần `<interface name="org.gnome.ShairportSync.RemoteControl">` và thêm các method mới:
+| Phương thức | Hành vi |
+|---|---|
+| `Mute()` | Ghi mẫu PCM bằng 0 nhưng vẫn giữ phiên phát và kết nối ALSA. |
+| `Unmute()` | Bỏ cờ mute VBot. Âm lượng vẫn chịu ảnh hưởng của `ChangeVolume`. |
+| `ChangeVolume(double)` | Chuyển giá trị `0..100` thành hệ số tuyến tính `0.0..1.0` và nhân vào mẫu PCM. |
+| `DisableOpenALSA()` | Đóng ALSA hiện tại và chặn mọi lần mở tiếp theo. |
+| `EnableOpenALSA()` | Bỏ chặn và yêu cầu mở ALSA ngay. |
+
+Các trạng thái trên chỉ nằm trong bộ nhớ tiến trình. Restart Shairport Sync sẽ đưa chúng về mặc định.
+
+## 2. Sửa XML D-Bus
+
+Trong interface `org.gnome.ShairportSync.RemoteControl` của `org.gnome.ShairportSync.xml`, thêm:
 
 ```xml
-    <!-- VBot extensions -->
-    <method name='Mute'/>
-    <method name='Unmute'/>
-    <method name='ChangeVolume'>
-      <arg name="volume_value" type="d" direction="in" />
-    </method>
-    <method name='EnableOpenALSA'/>
-    <method name='DisableOpenALSA'/>
+<method name='Mute'/>
+<method name='Unmute'/>
+<method name='ChangeVolume'>
+  <arg name='volume_value' type='d' direction='in'/>
+</method>
+<method name='EnableOpenALSA'/>
+<method name='DisableOpenALSA'/>
 ```
 
-### Giải thích
-- `Mute`/`Unmute`: chỉ can thiệp cờ toàn cục, không xử lý mixer.
-- `ChangeVolume(double)`: nhận volume kiểu double, tỷ lệ 0..100.
-- `EnableOpenALSA` / `DisableOpenALSA`: chuyển chế độ mở ALSA giữa exclusive/shared.
+Chữ ký `d` là D-Bus double. Tên phương thức và chữ hoa/chữ thường phải khớp hoàn toàn với câu lệnh gọi.
 
----
+Không sửa mã generated bằng tay. Rule trong `Makefile.am` sẽ chạy:
 
-## 2. `dbus-service.c`
+```bash
+gdbus-codegen \
+  --interface-prefix org.gnome \
+  --generate-c-code dbus-interface \
+  org.gnome.ShairportSync.xml
+```
 
-### Thêm extern và biến global
-Ở đầu file, sau include `dbus-service.h`, thêm:
+## 3. Khai báo giao tiếp với ALSA backend
+
+Trong `dbus-service.c`, đặt các khai báo sau dưới `#ifdef CONFIG_ALSA`:
 
 ```c
-// VBot: ALSA control externs (implemented in audio_alsa.c)
 extern volatile int vbot_shairport_silent_mode;
 extern volatile int vbot_open_alsa;
 extern float vbot_volume_factor;
-extern int vbot_alsa_open(int do_auto_setup);
+extern int vbot_alsa_open(void);
 extern int vbot_alsa_close(void);
 ```
 
-### Cập nhật handler D-Bus
-Tìm và thêm hoặc thay thế các handler sau:
+Điều kiện compile giúp bản build không có ALSA vẫn biên dịch được và vẫn có thể trả lời D-Bus mà không truy cập symbol ALSA.
+
+## 4. Handler D-Bus
+
+Trong `dbus-service.c`, triển khai năm handler theo các nguyên tắc:
+
+- Luôn gọi hàm `shairport_sync_remote_control_complete_*()` trước khi trả về `TRUE`.
+- Phần truy cập biến/hàm ALSA phải nằm trong `#ifdef CONFIG_ALSA`.
+- `ChangeVolume` chia giá trị nhận được cho `100.0`, sau đó clamp về `0.0f..1.0f`.
+- `DisableOpenALSA` đặt cờ về 0 trước khi đóng thiết bị để ngăn luồng phát mở lại.
+- `EnableOpenALSA` đặt cờ về 1 trước khi gọi hàm mở.
+- Các lệnh lặp lại phải an toàn: disable khi đã disable và enable khi đã enable không làm gì thêm.
+
+Đăng ký đủ signal trên `shairportSyncRemoteControlSkeleton`:
 
 ```c
-static gboolean on_handle_mute(ShairportSyncRemoteControl *skeleton,
-                               GDBusMethodInvocation *invocation,
-                               __attribute__((unused)) gpointer user_data) {
-  vbot_shairport_silent_mode = 1;
-  debug(1, "VBot: Mute command received - silent mode enabled");
-  shairport_sync_remote_control_complete_mute(skeleton, invocation);
-  return TRUE;
-}
-
-static gboolean on_handle_unmute(ShairportSyncRemoteControl *skeleton,
-                                 GDBusMethodInvocation *invocation,
-                                 __attribute__((unused)) gpointer user_data) {
-  vbot_shairport_silent_mode = 0;
-  debug(1, "VBot: Unmute command received - silent mode disabled");
-  shairport_sync_remote_control_complete_unmute(skeleton, invocation);
-  return TRUE;
-}
-
-static gboolean on_handle_change_volume(ShairportSyncRemoteControl *skeleton,
-                                        GDBusMethodInvocation *invocation,
-                                        const gdouble volume_value,
-                                        __attribute__((unused)) gpointer user_data) {
-  vbot_volume_factor = (float)(volume_value / 100.0);
-  if (vbot_volume_factor < 0.0f) vbot_volume_factor = 0.0f;
-  if (vbot_volume_factor > 1.0f) vbot_volume_factor = 1.0f;
-#ifdef CONFIG_DACP_CLIENT
-  dacp_set_volume((int)volume_value);
-#endif
-  debug(1, "VBot: ChangeVolume command received - volume set to %.0f, factor: %.3f",
-        volume_value, vbot_volume_factor);
-  shairport_sync_remote_control_complete_change_volume(skeleton, invocation);
-  return TRUE;
-}
-
-static gboolean on_handle_enable_open_alsa(ShairportSyncRemoteControl *skeleton,
-                                           GDBusMethodInvocation *invocation,
-                                           __attribute__((unused)) gpointer user_data) {
-  debug(1, "VBot: EnableOpenALSA command received - setting exclusive mode");
-  if (vbot_open_alsa == 1) {
-    debug(1, "VBot: Exclusive mode already enabled");
-    shairport_sync_remote_control_complete_enable_open_alsa(skeleton, invocation);
-    return TRUE;
-  }
-  vbot_open_alsa = 1;
-  debug(1, "VBot: Exclusive mode enabled - vbot_open_alsa = 1");
-
-  debug(1, "VBot: Closing device to apply exclusive mode...");
-  vbot_alsa_close();
-  debug(1, "VBot: Reopening device in exclusive mode...");
-  vbot_alsa_open(0);
-
-  shairport_sync_remote_control_complete_enable_open_alsa(skeleton, invocation);
-  return TRUE;
-}
-
-static gboolean on_handle_disable_open_alsa(ShairportSyncRemoteControl *skeleton,
-                                            GDBusMethodInvocation *invocation,
-                                            __attribute__((unused)) gpointer user_data) {
-  debug(1, "VBot: DisableOpenALSA command received - setting shared mode");
-  if (vbot_open_alsa == 0) {
-    debug(1, "VBot: Shared mode already enabled");
-    shairport_sync_remote_control_complete_disable_open_alsa(skeleton, invocation);
-    return TRUE;
-  }
-  vbot_open_alsa = 0;
-  debug(1, "VBot: Shared mode enabled - vbot_open_alsa = 0");
-
-  debug(1, "VBot: Closing device to apply shared mode...");
-  vbot_alsa_close();
-  debug(1, "VBot: Reopening device in shared mode...");
-  vbot_alsa_open(0);
-
-  shairport_sync_remote_control_complete_disable_open_alsa(skeleton, invocation);
-  return TRUE;
-}
+g_signal_connect(skeleton, "handle-mute", G_CALLBACK(on_handle_mute), NULL);
+g_signal_connect(skeleton, "handle-unmute", G_CALLBACK(on_handle_unmute), NULL);
+g_signal_connect(skeleton, "handle-change-volume", G_CALLBACK(on_handle_change_volume), NULL);
+g_signal_connect(skeleton, "handle-enable-open-alsa",
+                 G_CALLBACK(on_handle_enable_open_alsa), NULL);
+g_signal_connect(skeleton, "handle-disable-open-alsa",
+                 G_CALLBACK(on_handle_disable_open_alsa), NULL);
 ```
 
-### Đăng ký handler
-Xác nhận trong phần khởi tạo D-Bus đã có:
+Trong source thật, đối số đầu tiên là `shairportSyncRemoteControlSkeleton`; đoạn trên viết ngắn để dễ đọc.
 
-```c
-  g_signal_connect(shairportSyncRemoteControlSkeleton, "handle-mute",
-                   G_CALLBACK(on_handle_mute), NULL);
-  g_signal_connect(shairportSyncRemoteControlSkeleton, "handle-unmute",
-                   G_CALLBACK(on_handle_unmute), NULL);
-  g_signal_connect(shairportSyncRemoteControlSkeleton, "handle-change-volume",
-                   G_CALLBACK(on_handle_change_volume), NULL);
-  g_signal_connect(shairportSyncRemoteControlSkeleton, "handle-enable-open-alsa",
-                   G_CALLBACK(on_handle_enable_open_alsa), NULL);
-  g_signal_connect(shairportSyncRemoteControlSkeleton, "handle-disable-open-alsa",
-                   G_CALLBACK(on_handle_disable_open_alsa), NULL);
-```
+## 5. Trạng thái VBot trong `audio_alsa.c`
 
----
-
-## 3. `audio_alsa.c`
-
-### Thêm biến và wrapper
-Ở đầu file, thêm:
+Giá trị mặc định:
 
 ```c
 volatile int vbot_shairport_silent_mode = 0;
-volatile int vbot_open_alsa = 1;  // default: exclusive allowed
+volatile int vbot_open_alsa = 1;
 float vbot_volume_factor = 1.0f;
 ```
 
-và ở gần cuối file:
+- `silent_mode = 0`: không mute.
+- `open_alsa = 1`: cho phép mở ALSA.
+- `volume_factor = 1.0f`: giữ nguyên biên độ PCM.
+
+## 6. Khóa việc mở ALSA
+
+Ở đầu `do_open()`, trước khi thay đổi backend state:
 
 ```c
-/* VBot helper wrappers to allow external control (called from D-Bus handlers) */
-int vbot_alsa_open(int do_auto_setup) { (void)do_auto_setup; return do_open(); }
-int vbot_alsa_close(void) { return do_close(); }
+if (vbot_open_alsa == 0) {
+  debug(1, "VBot: ALSA open blocked by DisableOpenALSA");
+  return -EACCES;
+}
 ```
 
-### Áp dụng `vbot_open_alsa` khi mở ALSA
-Trong `get_permissible_configuration_settings()` và `actual_open_alsa_device()`, thay giá trị `mode` bằng:
+Không thay các lệnh `snd_pcm_open()` sang `SND_PCM_NONBLOCK`. Mục tiêu của `DisableOpenALSA` là nhường hoàn toàn thiết bị âm thanh cho VBot/ứng dụng khác, không phải mở ALSA theo một mode khác.
+
+## 7. Wrapper đóng/mở an toàn
+
+`do_open()` và `do_close()` là hàm static. Cung cấp wrapper và dùng cùng `alsa_mutex` với backend:
 
 ```c
-int mode = vbot_open_alsa ? 0 : SND_PCM_NONBLOCK;
+int vbot_alsa_open(void) {
+  int result;
+  pthread_mutex_lock(&alsa_mutex);
+  result = do_open();
+  pthread_mutex_unlock(&alsa_mutex);
+  return result;
+}
+
+int vbot_alsa_close(void) {
+  int result;
+  pthread_mutex_lock(&alsa_mutex);
+  result = do_close();
+  pthread_mutex_unlock(&alsa_mutex);
+  return result;
+}
 ```
 
-và dùng `mode` khi gọi `snd_pcm_open()` thay vì cố định `0`.
+Không gọi trực tiếp `snd_pcm_close()` từ `dbus-service.c`; việc đó bỏ qua quản lý state của ALSA backend.
 
-### Chặn mở ALSA khi `vbot_open_alsa == 0`
-Trong `do_open()`, thêm kiểm tra đầu hàm:
+## 8. Xử lý buffer PCM
+
+Ngay trước `alsa_pcm_write()` trong `do_play()`:
+
+1. Nếu không mute và factor bằng 1, ghi buffer gốc để không phát sinh allocation.
+2. Nếu mute hoặc cần đổi volume, cấp một buffer có cùng kích thước.
+3. Khi mute, dùng `memset(..., 0, ...)`.
+4. Với mẫu 16-bit, nhân từng `int16_t` bằng factor và làm tròn bằng `lrintf`.
+5. Với mẫu 32-bit, nhân từng `int32_t` bằng factor và làm tròn bằng `llrint`.
+6. Format không hỗ trợ được copy nguyên trạng để tránh diễn giải sai layout.
+7. Gọi `free()` sau `alsa_pcm_write()`. `free(NULL)` là hợp lệ.
+
+Số byte phải được tính từ số frame, số channel và kích thước sample của `current_encoded_output_format`:
 
 ```c
-static int do_open() {
-  extern volatile int vbot_open_alsa;
-  if (!vbot_open_alsa) {
-    debug(1, "do_open() BI CHAN vi vbot_open_alsa = 0 -> KHONG mo ALSA");
-    return -EACCES;
-  }
+size_t byte_count =
+    (size_t)samples * (size_t)channels * (size_t)sample_bytes;
 ```
 
-### Xử lý mute / volume phần mềm
-Trong `do_play()` trước khi gọi `alsa_pcm_write()`:
+Không giả định cố định stereo hoặc 16-bit.
 
-```c
-      void *write_buf = buf;
-      void *procbuf = NULL;
-      if ((vbot_shairport_silent_mode != 0) || (vbot_volume_factor != 1.0f)) {
-        int channels = CHANNELS_FROM_ENCODED_FORMAT(current_encoded_output_format);
-        sps_format_t fmt = (sps_format_t)FORMAT_FROM_ENCODED_FORMAT(current_encoded_output_format);
-        int sample_bytes = 1;
-        if ((fmt >= 0) && (fmt <= SPS_FORMAT_HIGHEST_NATIVE))
-          sample_bytes = fr[fmt].sample_size;
-        size_t bytes = (size_t)samples * (size_t)channels * (size_t)sample_bytes;
-        procbuf = malloc(bytes);
-        if (procbuf != NULL) {
-          if (vbot_shairport_silent_mode != 0) {
-            memset(procbuf, 0, bytes);
-          } else {
-            /* scale sample data by vbot_volume_factor */
-            ...
-          }
-          write_buf = procbuf;
-        }
-      }
+## 9. Checklist khi nâng phiên bản
 
-      ret = alsa_pcm_write(alsa_handle, write_buf, samples);
+- [ ] So sánh `org.gnome.ShairportSync.xml` và thêm đúng năm method.
+- [ ] Xác nhận tên type generated vẫn là `ShairportSyncRemoteControl`.
+- [ ] Xác nhận chữ ký callback generated của `ChangeVolume` vẫn nhận `gdouble`.
+- [ ] Port extern, năm handler và năm `g_signal_connect`.
+- [ ] Port ba biến trạng thái sang ALSA backend.
+- [ ] Xác định lại vị trí gọi `alsa_pcm_write()`; không dựa vào số dòng cũ.
+- [ ] Xác định lại `do_open()`, `do_close()` và mutex bảo vệ ALSA.
+- [ ] Build cả với `--with-alsa --with-dbus-interface`.
+- [ ] Nếu dự án hỗ trợ, build thêm cấu hình D-Bus không ALSA để kiểm tra `#ifdef`.
+- [ ] Dùng `gdbus introspect` kiểm tra chữ ký runtime.
+- [ ] Thử cả năm lệnh khi đang phát và khi không có phiên AirPlay.
+- [ ] Kiểm tra `lsof /dev/snd/*` sau disable và enable.
+- [ ] Theo dõi log để phát hiện deadlock, `EBUSY`, `ENOENT`, `ENODEV` hoặc crash.
 
-      if (procbuf)
-        free(procbuf);
-```
-
-> Ghi chú: nếu dùng volume phần mềm thì nên giữ `sample_bytes` chính xác với định dạng `current_encoded_output_format`.
-
----
-
-## 4. Quy trình sửa thủ công cho phiên bản tiếp theo
-
-1. Mở `org.gnome.ShairportSync.xml`, thêm các method dưới cùng của interface `org.gnome.ShairportSync.RemoteControl`.
-2. Chạy `gdbus-codegen` để tạo lại `dbus-interface.c`:
+## 10. Build kiểm tra
 
 ```bash
-gdbus-codegen --interface-prefix org.gnome --generate-c-code dbus-interface org.gnome.ShairportSync.xml
+autoreconf -fi
+./configure \
+  --sysconfdir=/etc \
+  --with-alsa \
+  --with-soxr \
+  --with-avahi \
+  --with-dbus-interface \
+  --with-ssl=openssl \
+  --with-systemd-startup \
+  --with-airplay-2
+make -j"$(nproc)"
 ```
 
-3. Kiểm tra `dbus-service.c`:
-   - thêm `extern` và handler mới
-   - thêm `g_signal_connect(...)` với các handler tương ứng
-4. Kiểm tra `audio_alsa.c`:
-   - thêm biến `vbot_shairport_silent_mode`, `vbot_open_alsa`, `vbot_volume_factor`
-   - thêm wrapper `vbot_alsa_open()` / `vbot_alsa_close()`
-   - bật `vbot_open_alsa` trong mọi lần `snd_pcm_open()`
-   - chặn `do_open()` khi `vbot_open_alsa == 0`
-   - thêm xử lý mute/volume phần mềm trong `do_play()`
-5. Build lại bằng `make` và kiểm tra không có lỗi compile/link.
-6. Khởi động lại service và thử các lệnh D-Bus:
-   - `Mute`, `Unmute`
-   - `ChangeVolume 50`
-   - `DisableOpenALSA`
-   - `EnableOpenALSA`
+Build thành công mới chỉ xác nhận interface và symbol khớp nhau. Cần thử runtime trên máy Linux có ALSA thật để xác nhận quyền system bus, thiết bị âm thanh và tương tác với VBot.
 
----
+## 11. Kiểm thử runtime tối thiểu
 
-## 5. Lưu ý quan trọng
+```bash
+gdbus introspect --system --dest org.gnome.ShairportSync \
+  --object-path /org/gnome/ShairportSync
 
-- `Mute` / `Unmute` chỉ thay đổi cờ toàn cục `vbot_shairport_silent_mode`.
-- `DisableOpenALSA` không nên mở lại ALSA nếu đang ở chế độ `vbot_open_alsa == 0`.
-- `EnableOpenALSA` phải đóng và mở lại thiết bị sau khi đổi chế độ.
-- Nếu service bị disconnect khi gọi lại `EnableOpenALSA`, cần kiểm tra log `journalctl -u shairport-sync` và trạng thái `alsa_handle`.
+dbus-send --system --print-reply --dest=org.gnome.ShairportSync \
+  /org/gnome/ShairportSync org.gnome.ShairportSync.RemoteControl.Mute
 
----
+dbus-send --system --print-reply --dest=org.gnome.ShairportSync \
+  /org/gnome/ShairportSync org.gnome.ShairportSync.RemoteControl.Unmute
 
-## 6. Nếu muốn nhanh hơn
+dbus-send --system --print-reply --dest=org.gnome.ShairportSync \
+  /org/gnome/ShairportSync org.gnome.ShairportSync.RemoteControl.ChangeVolume double:50
 
-Sao chép file `VBot_ALSA_DBus_Manual_Update_Guide.md` vào dự án và dùng nó làm checklist cho các phiên bản sau.
+dbus-send --system --print-reply --dest=org.gnome.ShairportSync \
+  /org/gnome/ShairportSync org.gnome.ShairportSync.RemoteControl.DisableOpenALSA
 
+dbus-send --system --print-reply --dest=org.gnome.ShairportSync \
+  /org/gnome/ShairportSync org.gnome.ShairportSync.RemoteControl.EnableOpenALSA
+```
 
-## 7 Thay đổi phiên bản build
-
-Chỉnh sửa file: verify-gitversion
+Kết quả đạt yêu cầu khi tất cả lệnh trả về `method return`, mute/volume nghe đúng, ALSA được giải phóng sau disable và mở lại được sau enable.
