@@ -135,6 +135,36 @@ static int do_open();
 static int do_close();
 
 pthread_mutex_t alsa_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+// All VBot state is protected by alsa_mutex, including D-Bus updates.
+static int vbot_open_alsa = 1;
+static int vbot_silent = 0;
+static double vbot_gain = 1.0;
+
+static double vbot_pcm_gain(double percent) {
+  return isnan(percent) || percent <= 0 ? 0 : percent >= 100 ? 1 : percent / 100;
+}
+
+// Scale integer PCM, including packed 24-bit and 24-bit in a 32-bit container.
+static void vbot_pcm_scale(unsigned char *out, const unsigned char *in, size_t count,
+                           unsigned int bytes, unsigned int bits, int big_endian,
+                           int unsigned_pcm, double gain) {
+  uint64_t modulus = UINT64_C(1) << bits;
+  uint64_t midpoint = modulus >> 1;
+  for (size_t i = 0; i < count; i++, in += bytes, out += bytes) {
+    uint64_t raw = 0;
+    for (unsigned int b = 0; b < bytes; b++)
+      raw |= (uint64_t)in[big_endian ? bytes - 1 - b : b] << (8 * b);
+    raw &= modulus - 1;
+    int64_t sample = unsigned_pcm ? (int64_t)raw - (int64_t)midpoint
+                                  : raw >= midpoint ? (int64_t)raw - (int64_t)modulus
+                                                    : (int64_t)raw;
+    int64_t scaled = llrint((double)sample * gain);
+    uint64_t encoded = (uint64_t)(unsigned_pcm ? scaled + (int64_t)midpoint : scaled);
+    for (unsigned int b = 0; b < bytes; b++)
+      out[big_endian ? bytes - 1 - b : b] = (unsigned char)(encoded >> (8 * b));
+  }
+}
 pthread_mutex_t alsa_mixer_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 pthread_t alsa_buffer_monitor_thread;
@@ -148,10 +178,6 @@ pthread_t alsa_buffer_monitor_thread;
 
 int mute_requested_externally = 0;
 int mute_requested_internally = 0;
-
-volatile int vbot_shairport_silent_mode = 0;
-volatile int vbot_open_alsa = 1;
-float vbot_volume_factor = 1.0f;
 
 // for tracking if the output device has stalled
 uint64_t stall_monitor_new_frame_count_time; // when the delay was last measured
@@ -245,15 +271,16 @@ static uint16_t permissible_configurations[SPS_RATE_HIGHEST + 1][SPS_FORMAT_HIGH
 
 static int get_permissible_configuration_settings() {
   int ret = 0;
+  pthread_mutex_lock_and_cleanup_push(&alsa_mutex);
   if (permissible_configuration_check_done == 0) {
     uint64_t hto = get_absolute_time_in_ns();
     snd_pcm_hw_params_t *local_alsa_params = NULL;
     snd_pcm_hw_params_alloca(&local_alsa_params);
     snd_pcm_info_t *local_alsa_info;
     snd_pcm_info_alloca(&local_alsa_info);
-    pthread_mutex_lock_and_cleanup_push(&alsa_mutex);
     snd_pcm_t *temporary_alsa_handle = NULL;
-    ret = snd_pcm_open(&temporary_alsa_handle, alsa_out_dev, SND_PCM_STREAM_PLAYBACK, 0);
+    ret = vbot_open_alsa ? snd_pcm_open(&temporary_alsa_handle, alsa_out_dev,
+                                         SND_PCM_STREAM_PLAYBACK, 0) : -EACCES;
     if (ret == 0) {
       snd_pcm_type_t device_type = snd_pcm_type(temporary_alsa_handle);
       ret = snd_pcm_info(temporary_alsa_handle, local_alsa_info);
@@ -445,7 +472,6 @@ static int get_permissible_configuration_settings() {
         ret = 0; // all good here, even if the last ret was an error
       }
     }
-    pthread_cleanup_pop(1); // unlock the mutex
     if (ret != 0) {
       char errorstring[1024];
       strerror_r(-ret, (char *)errorstring, sizeof(errorstring));
@@ -457,6 +483,7 @@ static int get_permissible_configuration_settings() {
             "get_permissible_configuration_settings: permissible configurations check took %f ms.",
             0.000001 * hot);
   }
+  pthread_cleanup_pop(1); // unlock the mutex
   return ret;
 }
 
@@ -1997,41 +2024,29 @@ static int do_play(void *buf, int samples) {
 
       snd_pcm_state_t prior_state = state; // keep this for afterwards....
       debug(4, "alsa: write %d frames.", samples);
-      void *write_buffer = buf;
-      void *processed_buffer = NULL;
-      if ((vbot_shairport_silent_mode != 0) || (vbot_volume_factor != 1.0f)) {
-        int channels = CHANNELS_FROM_ENCODED_FORMAT(current_encoded_output_format);
-        sps_format_t format = FORMAT_FROM_ENCODED_FORMAT(current_encoded_output_format);
-        int sample_bytes = ((format >= 0) && (format <= SPS_FORMAT_HIGHEST_NATIVE))
-                               ? fr[format].sample_size
-                               : 0;
-        size_t byte_count = (size_t)samples * (size_t)channels * (size_t)sample_bytes;
-        processed_buffer = malloc(byte_count);
-        if (processed_buffer != NULL) {
-          if (vbot_shairport_silent_mode != 0) {
-            memset(processed_buffer, 0, byte_count);
-          } else if (sample_bytes == 2) {
-            int16_t *input = buf;
-            int16_t *processed_samples = processed_buffer;
-            for (int i = 0; i < samples * channels; i++)
-              processed_samples[i] = (int16_t)lrintf((float)input[i] * vbot_volume_factor);
-          } else if (sample_bytes == 4) {
-            int32_t *input = buf;
-            int32_t *processed_samples = processed_buffer;
-            for (int i = 0; i < samples * channels; i++)
-              processed_samples[i] =
-                  (int32_t)llrint((double)input[i] * vbot_volume_factor);
-          } else {
-            memcpy(processed_buffer, buf, byte_count);
-          }
-          write_buffer = processed_buffer;
-        } else {
-          debug(1, "VBot: could not allocate buffer for software volume/mute");
+      void *processed = NULL;
+      void *pcm_output = buf;
+      if (vbot_silent || vbot_gain != 1.0) {
+        snd_pcm_format_t format = fr[FORMAT_FROM_ENCODED_FORMAT(current_encoded_output_format)].alsa_code;
+        int bytes = snd_pcm_format_physical_width(format) / 8;
+        int bits = snd_pcm_format_width(format);
+        size_t count = (size_t)samples * CHANNELS_FROM_ENCODED_FORMAT(current_encoded_output_format);
+        if (bytes < 1 || bytes > 4 || bits < 1 || bits > 32 || count > SIZE_MAX / bytes) {
+          pthread_setcancelstate(oldState, NULL);
+          return -EINVAL;
         }
+        processed = malloc(count * bytes);
+        if (processed == NULL) {
+          pthread_setcancelstate(oldState, NULL);
+          return -ENOMEM; // never leak full-volume audio on allocation failure
+        }
+        vbot_pcm_scale(processed, buf, count, bytes, bits,
+                       snd_pcm_format_big_endian(format) == 1,
+                       snd_pcm_format_unsigned(format) == 1, vbot_silent ? 0 : vbot_gain);
+        pcm_output = processed;
       }
-
-      ret = alsa_pcm_write(alsa_handle, write_buffer, samples);
-      free(processed_buffer);
+      ret = alsa_pcm_write(alsa_handle, pcm_output, samples);
+      free(processed);
       if (ret == -EIO) {
         debug(1, "alsa: I/O Error.");
         usleep(20000); // give it a breather...
@@ -2086,11 +2101,9 @@ static int do_play(void *buf, int samples) {
   return ret;
 }
 
-static int do_open() {
-  if (vbot_open_alsa == 0) {
-    debug(1, "VBot: ALSA open blocked by DisableOpenALSA");
+static int do_open_device(int report_unfixable_error) {
+  if (!vbot_open_alsa)
     return -EACCES;
-  }
   int ret = 0;
   if (alsa_backend_state != abm_disconnected)
     debug(1, "alsa: do_open() -- asking to open the output device when it is already "
@@ -2114,7 +2127,7 @@ static int do_open() {
       debug(3, "alsa: do_open() -- alsa_backend_state => abm_connected");
       alsa_backend_state = abm_connected; // only do this if it really opened it.
     } else {
-      if ((ret == -ENOENT) || (ret == -ENODEV)) // if the device isn't there...
+      if (report_unfixable_error && ((ret == -ENOENT) || (ret == -ENODEV)))
         handle_unfixable_error(-ret);
     }
   } else {
@@ -2122,6 +2135,8 @@ static int do_open() {
   }
   return ret;
 }
+
+static int do_open() { return do_open_device(1); }
 
 static int do_close() {
   if (alsa_backend_state == abm_disconnected)
@@ -2148,19 +2163,47 @@ static int do_close() {
   return derr;
 }
 
-int vbot_alsa_open(void) {
-  int result;
+void vbot_alsa_set_mute(int muted) {
   pthread_mutex_lock(&alsa_mutex);
-  result = do_open();
+  vbot_silent = !!muted;
   pthread_mutex_unlock(&alsa_mutex);
-  return result;
 }
 
-int vbot_alsa_close(void) {
-  int result;
+void vbot_alsa_set_volume(double percent) {
   pthread_mutex_lock(&alsa_mutex);
-  result = do_close();
+  vbot_gain = vbot_pcm_gain(percent);
   pthread_mutex_unlock(&alsa_mutex);
+}
+
+int vbot_alsa_set_enabled(int enabled) {
+  int result = 0;
+  int old_state;
+  pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &old_state);
+  pthread_mutex_lock(&alsa_mutex);
+  vbot_open_alsa = !!enabled;
+  if (!enabled)
+    result = do_close();
+  pthread_mutex_unlock(&alsa_mutex);
+  if (enabled) {
+    // Discovery takes alsa_mutex itself. The final open rechecks the gate.
+    result = get_permissible_configuration_settings();
+    pthread_mutex_lock(&alsa_mutex);
+    if (result == 0 && vbot_open_alsa && alsa_handle == NULL) {
+      if (current_encoded_output_format == 0) {
+        int32_t selected = search_for_suitable_configuration(
+            disable_standby_mode_default_channels, disable_standby_mode_default_rate,
+            disable_standby_mode_default_format, &check_configuration);
+        if (selected > 0)
+          current_encoded_output_format = selected;
+        else
+          result = selected < 0 ? selected : -EINVAL;
+      }
+      if (result == 0)
+        result = do_open_device(0);
+    }
+    pthread_mutex_unlock(&alsa_mutex);
+  }
+  pthread_setcancelstate(old_state, NULL);
   return result;
 }
 
@@ -2332,9 +2375,16 @@ static void *alsa_buffer_monitor_thread_code(__attribute__((unused)) void *arg) 
     usleep(50000);
   }
 
-  current_encoded_output_format =
-      get_configuration(disable_standby_mode_default_channels, disable_standby_mode_default_rate,
-                        disable_standby_mode_default_format);
+  pthread_mutex_lock_and_cleanup_push(&alsa_mutex);
+  if (current_encoded_output_format == 0) {
+    int32_t selected = search_for_suitable_configuration(
+        disable_standby_mode_default_channels, disable_standby_mode_default_rate,
+        disable_standby_mode_default_format, &check_configuration);
+    if (selected > 0)
+      current_encoded_output_format = selected;
+  }
+  pthread_mutex_unlock(&alsa_mutex);
+  pthread_cleanup_pop(0);
 
   debug(1, "alsa: disable standby initial parameters: %s.",
         short_format_description(current_encoded_output_format));
@@ -2362,7 +2412,7 @@ static void *alsa_buffer_monitor_thread_code(__attribute__((unused)) void *arg) 
             sleep_time_actual_ns * 0.000000001, config.disable_standby_mode_silence_scan_interval);
     pthread_mutex_lock_and_cleanup_push(&alsa_mutex);
     // check possible state transitions here
-    if ((alsa_backend_state == abm_disconnected) && (config.keep_dac_busy != 0)) {
+    if (vbot_open_alsa && (alsa_backend_state == abm_disconnected) && (config.keep_dac_busy != 0)) {
       // open the dac and move to abm_connected mode
       if (do_open() == 0) {
         debug(2,
@@ -2480,8 +2530,10 @@ static int32_t get_configuration(unsigned int channels, unsigned int rate, unsig
 
   // first, check that the device is there!
   snd_pcm_t *temp_alsa_handle = NULL;
-  int response = snd_pcm_open(&temp_alsa_handle, alsa_out_dev, SND_PCM_STREAM_PLAYBACK, 0);
-  ;
+  int response = -EACCES;
+  pthread_mutex_lock_and_cleanup_push(&alsa_mutex);
+  response = vbot_open_alsa ? snd_pcm_open(&temp_alsa_handle, alsa_out_dev,
+                                          SND_PCM_STREAM_PLAYBACK, 0) : -EACCES;
   if ((response == 0) && (temp_alsa_handle != NULL)) {
     response = snd_pcm_close(temp_alsa_handle);
     if (response != 0) {
@@ -2502,5 +2554,7 @@ static int32_t get_configuration(unsigned int channels, unsigned int rate, unsig
   // if we can access the device, then search for configurations
   if (response == 0)
     response = search_for_suitable_configuration(channels, rate, format, &check_configuration);
+  pthread_mutex_unlock(&alsa_mutex);
+  pthread_cleanup_pop(0);
   return response;
 }

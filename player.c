@@ -196,6 +196,12 @@ void unencrypted_packet_decode(rtsp_conn_info *conn, unsigned char *packet, int 
   } else if (conn->stream.type == ast_uncompressed) {
     int i;
     short *source = (short *)packet;
+    // dest (abuf->data) is allocated for exactly one packet:
+    // conn->frames_per_packet * conn->input_bytes_per_frame bytes. Never copy more
+    // than that, regardless of the received packet length, to avoid a heap overflow.
+    int max_bytes = conn->frames_per_packet * conn->input_bytes_per_frame;
+    if (length > max_bytes)
+      length = max_bytes;
     for (i = 0; i < length / 2; i++) {
       // assuming each input sample is 16 bits.
       *dest = ntohs(*source);
@@ -4609,7 +4615,7 @@ void *player_thread_func(void *arg) {
 #endif
                 ) {
 
-                  float (*fbufs)[1024] = malloc(conn->input_num_channels * sizeof(*fbufs));
+                  float (*fbufs)[inframe->length] = malloc(conn->input_num_channels * sizeof(*fbufs));
                   // debug(1, "size of array allocated is %d bytes.", conn->input_num_channels *
                   // sizeof(*fbufs));
                   int32_t *tbuf32 = conn->tbuf;

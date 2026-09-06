@@ -42,17 +42,17 @@
     <property name="FileAndLine" type="b" access="readwrite" />
   </interface>  
   <interface name="org.gnome.ShairportSync.RemoteControl">
+    <!-- Local ALSA PCM controls; ChangeVolume is linear percent, not AirPlay volume. -->
+    <method name="Mute"/>
+    <method name="Unmute"/>
+    <method name="ChangeVolume">
+      <arg name="volume_value" type="d" direction="in"/>
+    </method>
+    <method name="EnableOpenALSA"/>
+    <method name="DisableOpenALSA"/>
 		<method name='FastForward'/>
 		<method name='Rewind'/>
 		<method name='ToggleMute'/>
-		<!-- VBot Assistant extensions -->
-		<method name='Mute'/>
-		<method name='Unmute'/>
-		<method name='ChangeVolume'>
-			<arg name='volume_value' type='d' direction='in'/>
-		</method>
-		<method name='EnableOpenALSA'/>
-		<method name='DisableOpenALSA'/>
 		<method name='Next'/>
 		<method name='Previous'/>
 		<method name='Pause'/>
