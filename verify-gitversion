@@ -3,7 +3,7 @@
 test -f gitversion-stamp && BGD=`cat gitversion-stamp` || :
 # echo "existing gitversion-stamp is $BGD"
 #GD=`git describe --tags --dirty --broken --always 2>/dev/null`
-GD="VBot_16_09_2026-5.5.2"
+GD="VBot_15_10_2026-5.6"
 if [ x"$GD" = x ] ; then
   GD="NA"
 fi

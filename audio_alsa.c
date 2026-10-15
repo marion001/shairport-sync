@@ -35,7 +35,6 @@
 #include <stdio.h>
 #include <unistd.h>
 
-#include "config.h"
 
 #include "activity_monitor.h"
 #include "audio.h"
@@ -91,7 +90,6 @@ static void deinit(void);
 static int prepare(void);
 static int32_t get_configuration(unsigned int channels, unsigned int rate, unsigned int sps_format);
 static int configure(int32_t requested_encoded_format, char **channel_map);
-static void start(int i_sample_rate, int i_sample_format);
 static int play(void *buf, int samples, __attribute__((unused)) int sample_type,
                 __attribute__((unused)) uint32_t timestamp,
                 __attribute__((unused)) uint64_t playtime);
@@ -117,7 +115,6 @@ audio_output audio_alsa = {.name = "alsa",
                            .prepare = &prepare,
                            .get_configuration = &get_configuration,
                            .configure = &configure,
-                           .start = &start,
                            .stop = &stop,
                            .is_running = NULL,
                            .flush = &flush,
@@ -736,14 +733,9 @@ static int actual_open_alsa_device() {
     ret = snd_pcm_open(&alsa_handle, alsa_out_dev, SND_PCM_STREAM_PLAYBACK, 0);
     // EHOSTDOWN seems to signify that it's a PipeWire pseudo device that can't be accessed by this
     // user. So, try the first device ALSA device and log it.
-    if ((ret == -EHOSTDOWN) && (strcmp(alsa_out_dev, "default") == 0)) {
-      ret = snd_pcm_open(&alsa_handle, "hw:0", SND_PCM_STREAM_PLAYBACK, 0);
-      if ((ret == 0) || (ret == -EBUSY)) {
-        // being busy should be okay
-        inform("the default ALSA device is inaccessible -- \"hw:0\" used instead.");
-        set_alsa_out_dev("hw:0");
-      }
-    }
+    if (ret == -EHOSTDOWN)
+      debug(1, "ALSA device %s is inaccessible (PipeWire/PulseAudio may not be running).",
+            alsa_out_dev);
     if (ret == 0) {
       if (alsa_handle_status == -EBUSY)
         warn("The output device \"%s\" is no longer busy and will be used by Shairport Sync.",
@@ -767,7 +759,7 @@ static int actual_open_alsa_device() {
 
     ret = snd_pcm_hw_params_any(alsa_handle, alsa_params);
     if (ret < 0) {
-      die("audio_alsa: Broken configuration for device \"%s\": no configurations "
+      warn("audio_alsa: Broken configuration for device \"%s\": no configurations "
           "available",
           alsa_out_dev);
       return ret;
@@ -793,13 +785,13 @@ static int actual_open_alsa_device() {
 
     ret = snd_pcm_hw_params_set_access(alsa_handle, alsa_params, access);
     if (ret < 0) {
-      die("alsa: access type not available for device \"%s\": %s", alsa_out_dev, snd_strerror(ret));
+      warn("alsa: access type not available for device \"%s\": %s", alsa_out_dev, snd_strerror(ret));
       return ret;
     }
 
     ret = snd_pcm_hw_params_set_channels(alsa_handle, alsa_params, channels);
     if (ret < 0) {
-      die("alsa: %u channels not available for device \"%s\": %s", channels, alsa_out_dev,
+      warn("alsa: %u channels not available for device \"%s\": %s", channels, alsa_out_dev,
           snd_strerror(ret));
       return ret;
     }
@@ -807,7 +799,7 @@ static int actual_open_alsa_device() {
     snd_pcm_format_t sf = fr[format].alsa_code;
     ret = snd_pcm_hw_params_set_format(alsa_handle, alsa_params, sf);
     if (ret < 0) {
-      die("alsa: sample format %s not available for device \"%s\": %s",
+      warn("alsa: sample format %s not available for device \"%s\": %s",
           sps_format_description_string(format), alsa_out_dev, snd_strerror(ret));
       return ret;
     }
@@ -818,9 +810,9 @@ static int actual_open_alsa_device() {
     ret = snd_pcm_hw_params_set_rate_near(alsa_handle, alsa_params, &actual_sample_rate, &dir);
 
     if ((ret < 0) || (actual_sample_rate != rate)) {
-      die("alsa: The frame rate of %i frames per second is not available for playback: %s", rate,
+      warn("alsa: The frame rate of %i frames per second is not available for playback: %s", rate,
           snd_strerror(ret));
-      return ret;
+      return ret < 0 ? ret : -EINVAL;
     }
 
     if (set_period_size_request != 0) {
@@ -861,7 +853,7 @@ static int actual_open_alsa_device() {
 
     ret = snd_pcm_hw_params(alsa_handle, alsa_params);
     if (ret < 0) {
-      die("alsa: Unable to set hw parameters for device \"%s\": %s.", alsa_out_dev,
+      warn("alsa: Unable to set hw parameters for device \"%s\": %s.", alsa_out_dev,
           snd_strerror(ret));
       return ret;
     }
@@ -1068,8 +1060,14 @@ static int open_alsa_device() {
   int oldState;
   pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &oldState); // make this un-cancellable
   result = actual_open_alsa_device();
-  if (result != 0)
+  if (result != 0) {
     debug(1, "Error in open_alsa_device: %d.", result);
+    if (alsa_handle != NULL) {
+      snd_pcm_close(alsa_handle);
+      alsa_handle = NULL;
+    }
+    alsa_handle_status = result;
+  }
   pthread_setcancelstate(oldState, NULL);
   return result;
 }
@@ -1673,7 +1671,14 @@ static void deinit(void) {
     free(hw_alsa_out_dev);
 }
 
-static int prepare() { return get_permissible_configuration_settings(); }
+static int prepare() {
+  if (alsa_device_initialised == 0) {
+    debug(2, "alsa: prepare() calling alsa_device_init.");
+    alsa_device_init();
+    alsa_device_initialised = 1;
+  }
+  return get_permissible_configuration_settings();
+}
 
 static int set_mute_state() {
   int response = 1; // some problem expected, e.g. no mixer or not allowed to use it or disconnected
@@ -1713,16 +1718,6 @@ static int set_mute_state() {
 }
 
 static output_parameters_t *parameters() { return &output_parameters; }
-
-static void start(__attribute__((unused)) int i_sample_rate,
-                  __attribute__((unused)) int i_sample_format) {
-
-  if (alsa_device_initialised == 0) {
-    debug(2, "alsa: start() calling alsa_device_init.");
-    alsa_device_init();
-    alsa_device_initialised = 1;
-  }
-}
 
 static int standard_delay_and_status(snd_pcm_state_t *state, snd_pcm_sframes_t *delay,
                                      yndk_type *using_update_timestamps) {

@@ -1,9 +1,9 @@
-# Hướng dẫn port VBot ALSA/D-Bus cho Shairport Sync 5.5
+# Hướng dẫn port VBot ALSA/D-Bus cho Shairport Sync 5.6
 
-Tài liệu này mô tả phần mở rộng VBot đang dùng trong source Shairport Sync 5.5 ở thư mục hiện tại. Bản port chỉ sửa ba file mã nguồn:
+Tài liệu này mô tả phần mở rộng VBot đang dùng trong source Shairport Sync 5.6 ở thư mục hiện tại. Bản port chỉ sửa ba file mã nguồn:
 
-- `org.gnome.ShairportSync.xml`
-- `dbus-service.c`
+- `dbus/org.gnome.ShairportSync.xml`
+- `dbus/dbus-service.c`
 - `audio_alsa.c`
 
 Không cần tạo header hoặc source riêng cho VBot. Không sửa trực tiếp `dbus-interface.c` và `dbus-interface.h`; hai file đó được sinh lại từ XML bằng `gdbus-codegen` trong lúc build.
@@ -28,7 +28,7 @@ Trạng thái chỉ nằm trong bộ nhớ tiến trình. Khi khởi động l�
 
 ## 2. Khai báo XML D-Bus
 
-Trong interface `org.gnome.ShairportSync.RemoteControl` của `org.gnome.ShairportSync.xml`, thêm:
+Trong interface `org.gnome.ShairportSync.RemoteControl` của `dbus/org.gnome.ShairportSync.xml`, thêm:
 
 ```xml
 <method name="Mute"/>
@@ -48,12 +48,12 @@ Rule hiện có trong `Makefile.am` tự sinh giao diện:
 gdbus-codegen \
   --interface-prefix org.gnome \
   --generate-c-code dbus-interface \
-  org.gnome.ShairportSync.xml
+  dbus/org.gnome.ShairportSync.xml
 ```
 
-## 3. Kết nối `dbus-service.c` với ALSA
+## 3. Kết nối `dbus/dbus-service.c` với ALSA
 
-Các API được định nghĩa trong `audio_alsa.c` và khai báo dưới `CONFIG_ALSA` trong `dbus-service.c`:
+Các API được định nghĩa trong `audio_alsa.c` và khai báo dưới `CONFIG_ALSA` trong `dbus/dbus-service.c`:
 
 ```c
 #ifdef CONFIG_ALSA
@@ -132,7 +132,7 @@ Kiểm tra `vbot_open_alsa` phải nằm ở tất cả các đường có thể
 
 Nếu thiết bị đang mở, gọi Enable lặp lại không đóng/mở handle. Nếu lần mở thất bại, D-Bus trả lỗi nhưng quyền mở vẫn được bật để phiên phát hoặc lần Enable sau có thể thử lại.
 
-Không thêm `SND_PCM_NONBLOCK`, không chuyển sang dmix/shared và không gọi trực tiếp `snd_pcm_close()` từ `dbus-service.c`.
+Không thêm `SND_PCM_NONBLOCK`, không chuyển sang dmix/shared và không gọi trực tiếp `snd_pcm_close()` từ `dbus/dbus-service.c`.
 
 ## 6. Xử lý PCM
 

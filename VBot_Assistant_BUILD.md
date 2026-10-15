@@ -1,11 +1,11 @@
-# VBot Assistant – Build Shairport Sync 5.5
+# VBot Assistant – Build Shairport Sync 5.6
 
-Tài liệu này hướng dẫn build, cài đặt và kiểm tra Shairport Sync 5.5 có phần mở rộng VBot ALSA/D-Bus trên Raspberry Pi OS hoặc Debian.
+Tài liệu này hướng dẫn build, cài đặt và kiểm tra Shairport Sync 5.6 có phần mở rộng VBot ALSA/D-Bus trên Raspberry Pi OS hoặc Debian.
 
 ## 1. Các file đã tùy biến
 
-- `org.gnome.ShairportSync.xml`: khai báo năm phương thức D-Bus.
-- `dbus-service.c`: nhận lệnh, kiểm tra backend và trả kết quả D-Bus.
+- `dbus/org.gnome.ShairportSync.xml`: khai báo năm phương thức D-Bus.
+- `dbus/dbus-service.c`: nhận lệnh, kiểm tra backend và trả kết quả D-Bus.
 - `audio_alsa.c`: mute PCM, volume tuyến tính và đóng/mở ALSA an toàn.
 
 Không cần file source hoặc header VBot riêng. Không sửa trực tiếp `dbus-interface.c` hay `dbus-interface.h`; build sẽ sinh chúng từ XML bằng `gdbus-codegen`.
@@ -30,13 +30,32 @@ Nếu không cần MQTT, bỏ `--with-mqtt-client` và có thể bỏ `libmosqui
 
 ## 3. Chuẩn bị source
 
+**AirPlay 2 của bản 5.6 yêu cầu NQPTP SMI 11.** Kiểm tra bằng `nqptp -V`.
+Nếu đang dùng SMI 10, cần build/cài NQPTP mới trước khi chạy bản này:
+
 ```bash
-cd /duong-dan/toi/shairport-sync-master_NEW
+git clone https://github.com/mikebrady/nqptp.git
+cd nqptp
+autoreconf -fi
+./configure --with-systemd-startup
+make -j2
+sudo make install
+sudo systemctl daemon-reload
+sudo systemctl restart nqptp
+nqptp -V
+cd ..
+```
+
+Chờ NQPTP khởi tạo xong rồi khởi động Shairport Sync. Bản đã kiểm thử trên Pi
+dùng NQPTP 1.2.9, SMI 11; NQPTP 1.2.6, SMI 10 không tương thích.
+
+```bash
+cd /duong-dan/toi/shairport-sync-master_NEW/shairport-sync-master
 chmod +x verify-gitversion
 sed -i 's/\r$//' verify-gitversion
 ```
 
-Source tải từ ZIP có thể không chứa `.git`, vì vậy phần git revision trong `shairport-sync -V` có thể là `NA`. Phiên bản source này được khai báo là `5.5` trong `configure.ac`.
+Source tải từ ZIP có thể không chứa `.git`, vì vậy phần git revision trong `shairport-sync -V` có thể là `NA`. Phiên bản source này được khai báo là `5.6` trong `configure.ac`.
 
 ## 4. Configure và build
 
