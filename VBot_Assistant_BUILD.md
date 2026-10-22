@@ -1,6 +1,6 @@
-# VBot Assistant – Build Shairport Sync 5.6
+# VBot Assistant – Build Shairport Sync 5.6.1
 
-Tài liệu này hướng dẫn build, cài đặt và kiểm tra Shairport Sync 5.6 có phần mở rộng VBot ALSA/D-Bus trên Raspberry Pi OS hoặc Debian.
+Tài liệu này hướng dẫn build, cài đặt và kiểm tra Shairport Sync 5.6.1 có phần mở rộng VBot ALSA/D-Bus trên Raspberry Pi OS hoặc Debian.
 
 ## 1. Các file đã tùy biến
 
@@ -30,7 +30,7 @@ Nếu không cần MQTT, bỏ `--with-mqtt-client` và có thể bỏ `libmosqui
 
 ## 3. Chuẩn bị source
 
-**AirPlay 2 của bản 5.6 yêu cầu NQPTP SMI 11.** Kiểm tra bằng `nqptp -V`.
+**AirPlay 2 của bản 5.6.1 yêu cầu NQPTP SMI 11.** Kiểm tra bằng `nqptp -V`.
 Nếu đang dùng SMI 10, cần build/cài NQPTP mới trước khi chạy bản này:
 
 ```bash
@@ -50,12 +50,12 @@ Chờ NQPTP khởi tạo xong rồi khởi động Shairport Sync. Bản đã ki
 dùng NQPTP 1.2.9, SMI 11; NQPTP 1.2.6, SMI 10 không tương thích.
 
 ```bash
-cd /duong-dan/toi/shairport-sync-master_NEW/shairport-sync-master
+cd /duong-dan/toi/shairport-sync-master_NEW
 chmod +x verify-gitversion
 sed -i 's/\r$//' verify-gitversion
 ```
 
-Source tải từ ZIP có thể không chứa `.git`, vì vậy phần git revision trong `shairport-sync -V` có thể là `NA`. Phiên bản source này được khai báo là `5.6` trong `configure.ac`.
+Source tải từ ZIP có thể không chứa `.git`, vì vậy phần git revision trong `shairport-sync -V` có thể là `NA`. Phiên bản source này được khai báo là `5.6.1` trong `configure.ac`.
 
 ## 4. Configure và build
 
@@ -156,7 +156,7 @@ Unmute chỉ bỏ trạng thái mute. Hệ số của lần `ChangeVolume` gần
 dbus-send --system --print-reply \
   --dest=org.gnome.ShairportSync \
   /org/gnome/ShairportSync \
-  org.gnome.ShairportSync.RemoteControl.ChangeVolume double:10
+  org.gnome.ShairportSync.RemoteControl.ChangeVolume double:70
 ```
 
 Giá trị đầu vào dùng thang `0..100`:
@@ -203,7 +203,7 @@ Chạy ở terminal thứ hai:
 
 ```bash
 dbus-send --system --print-reply --dest=org.gnome.ShairportSync /org/gnome/ShairportSync org.gnome.ShairportSync.RemoteControl.Mute
-dbus-send --system --print-reply --dest=org.gnome.ShairportSync /org/gnome/ShairportSync org.gnome.ShairportSync.RemoteControl.ChangeVolume double:10
+dbus-send --system --print-reply --dest=org.gnome.ShairportSync /org/gnome/ShairportSync org.gnome.ShairportSync.RemoteControl.ChangeVolume double:70
 dbus-send --system --print-reply --dest=org.gnome.ShairportSync /org/gnome/ShairportSync org.gnome.ShairportSync.RemoteControl.Unmute
 dbus-send --system --print-reply --dest=org.gnome.ShairportSync /org/gnome/ShairportSync org.gnome.ShairportSync.RemoteControl.ChangeVolume double:100
 dbus-send --system --print-reply --dest=org.gnome.ShairportSync /org/gnome/ShairportSync org.gnome.ShairportSync.RemoteControl.DisableOpenALSA
@@ -279,3 +279,14 @@ Build thành công chỉ xác nhận XML, callback và symbol khớp nhau. Trên
 6. Theo dõi `lsof` và journal để phát hiện handle chưa đóng, deadlock hoặc crash.
 
 Chi tiết triển khai nằm trong `VBot_ALSA_DBus_Manual_Update_Guide.md`.
+
+## 11. Ki?m tra b?n t?ch h?p 5.6.1
+
+?? ??i chi?u ch? k? XML, n?m signal handler v? c?c h?m complete t??ng ?ng.
+?? bi?n d?ch ri?ng c?c h?m x? l? gain/PCM b?ng GCC v?i `-Wall -Wextra -Werror`
+v? UndefinedBehaviorSanitizer: ??t 560 tr??ng h?p PCM 8/16/24/32-bit,
+signed/unsigned, LE/BE v? c?c gi? tr? bi?n gain (?m, 0, 70, 100, NaN, v? c?c).
+
+Ch?a build to?n b? binary ho?c ki?m tra D-Bus/ALSA tr?n thi?t b? th?t trong
+l?n t?ch h?p n?y: WSL hi?n thi?u Autotools, gdbus-codegen v? c?c th? vi?n ph?t tri?n.
+C?n th?c hi?n c?c b??c build v? ki?m th? runtime ph?a tr?n tr?n Raspberry Pi/Debian.

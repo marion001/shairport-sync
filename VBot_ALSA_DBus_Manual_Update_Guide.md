@@ -1,6 +1,6 @@
-# Hướng dẫn port VBot ALSA/D-Bus cho Shairport Sync 5.6
+# Hướng dẫn port VBot ALSA/D-Bus cho Shairport Sync 5.6.1
 
-Tài liệu này mô tả phần mở rộng VBot đang dùng trong source Shairport Sync 5.6 ở thư mục hiện tại. Bản port chỉ sửa ba file mã nguồn:
+Tài liệu này mô tả phần mở rộng VBot đang dùng trong source Shairport Sync 5.6.1 ở thư mục hiện tại. Bản port chỉ sửa ba file mã nguồn:
 
 - `dbus/org.gnome.ShairportSync.xml`
 - `dbus/dbus-service.c`

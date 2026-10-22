@@ -472,7 +472,7 @@ static int get_permissible_configuration_settings() {
     if (ret != 0) {
       char errorstring[1024];
       strerror_r(-ret, (char *)errorstring, sizeof(errorstring));
-      debug(1, "get_permissible_configuration_settings: error %d (\"%s\").", ret, errorstring);
+      debug(1, "get_permissible_configuration_settings on device \"%s\": error %d (\"%s\").", alsa_out_dev, ret, errorstring);
     }
     int64_t hot = get_absolute_time_in_ns() - hto;
     if (hot > 200000000)
