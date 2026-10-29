@@ -38,7 +38,6 @@ extern void vbot_alsa_set_mute(int muted);
 extern void vbot_alsa_set_volume(double percent);
 extern int vbot_alsa_set_enabled(int enabled);
 #endif
-
 #include "player.h"
 #include "rtsp.h"
 
@@ -482,10 +481,9 @@ static gboolean vbot_require_alsa(GDBusMethodInvocation *invocation) {
   return FALSE;
 }
 
-static gboolean on_handle_mute(ShairportSyncRemoteControl *skeleton,
-    GDBusMethodInvocation *invocation, __attribute__((unused)) gpointer userdata) {
-  if (!vbot_require_alsa(invocation))
-    return TRUE;
+static gboolean on_handle_mute(ShairportSyncRemoteControl *skeleton, GDBusMethodInvocation *invocation,
+                               __attribute__((unused)) gpointer userdata) {
+  if (!vbot_require_alsa(invocation)) return TRUE;
 #ifdef CONFIG_ALSA
   vbot_alsa_set_mute(1);
 #endif
@@ -494,10 +492,9 @@ static gboolean on_handle_mute(ShairportSyncRemoteControl *skeleton,
   return TRUE;
 }
 
-static gboolean on_handle_unmute(ShairportSyncRemoteControl *skeleton,
-    GDBusMethodInvocation *invocation, __attribute__((unused)) gpointer userdata) {
-  if (!vbot_require_alsa(invocation))
-    return TRUE;
+static gboolean on_handle_unmute(ShairportSyncRemoteControl *skeleton, GDBusMethodInvocation *invocation,
+                                 __attribute__((unused)) gpointer userdata) {
+  if (!vbot_require_alsa(invocation)) return TRUE;
 #ifdef CONFIG_ALSA
   vbot_alsa_set_mute(0);
 #endif
@@ -506,10 +503,9 @@ static gboolean on_handle_unmute(ShairportSyncRemoteControl *skeleton,
   return TRUE;
 }
 
-static gboolean on_handle_change_volume(ShairportSyncRemoteControl *skeleton,
-    GDBusMethodInvocation *invocation, gdouble volume_value, __attribute__((unused)) gpointer userdata) {
-  if (!vbot_require_alsa(invocation))
-    return TRUE;
+static gboolean on_handle_change_volume(ShairportSyncRemoteControl *skeleton, GDBusMethodInvocation *invocation,
+                                        gdouble volume_value, __attribute__((unused)) gpointer userdata) {
+  if (!vbot_require_alsa(invocation)) return TRUE;
 #ifdef CONFIG_ALSA
   vbot_alsa_set_volume(volume_value);
 #endif
@@ -518,10 +514,9 @@ static gboolean on_handle_change_volume(ShairportSyncRemoteControl *skeleton,
   return TRUE;
 }
 
-static gboolean on_handle_enable_open_alsa(ShairportSyncRemoteControl *skeleton,
-    GDBusMethodInvocation *invocation, __attribute__((unused)) gpointer userdata) {
-  if (!vbot_require_alsa(invocation))
-    return TRUE;
+static gboolean on_handle_enable_open_alsa(ShairportSyncRemoteControl *skeleton, GDBusMethodInvocation *invocation,
+                                           __attribute__((unused)) gpointer userdata) {
+  if (!vbot_require_alsa(invocation)) return TRUE;
 #ifdef CONFIG_ALSA
   int result = vbot_alsa_set_enabled(1);
   if (result != 0) {
@@ -535,10 +530,9 @@ static gboolean on_handle_enable_open_alsa(ShairportSyncRemoteControl *skeleton,
   return TRUE;
 }
 
-static gboolean on_handle_disable_open_alsa(ShairportSyncRemoteControl *skeleton,
-    GDBusMethodInvocation *invocation, __attribute__((unused)) gpointer userdata) {
-  if (!vbot_require_alsa(invocation))
-    return TRUE;
+static gboolean on_handle_disable_open_alsa(ShairportSyncRemoteControl *skeleton, GDBusMethodInvocation *invocation,
+                                            __attribute__((unused)) gpointer userdata) {
+  if (!vbot_require_alsa(invocation)) return TRUE;
 #ifdef CONFIG_ALSA
   int result = vbot_alsa_set_enabled(0);
   if (result != 0) {
@@ -996,14 +990,14 @@ static gboolean on_handle_remote_command(ShairportSync *skeleton, GDBusMethodInv
   char *client_reply_hex = "";
 #ifdef CONFIG_DACP_CLIENT
   char *client_reply = NULL;
-  ssize_t reply_size = 0;
+  size_t reply_size = 0;
   reply = dacp_send_command((const char *)command, &client_reply, &reply_size);
   client_reply_hex = alloca(reply_size * 2 + 1);
   if (client_reply_hex) {
     char *p = client_reply_hex;
     if (client_reply) {
       char *q = client_reply;
-      int i;
+      size_t i;
       for (i = 0; i < reply_size; i++) {
         snprintf(p, 3, "%02X", *q);
         p += 2;
@@ -1283,16 +1277,11 @@ static void on_dbus_name_acquired(GDBusConnection *connection, const gchar *name
                    G_CALLBACK(on_handle_resume), NULL);
   g_signal_connect(shairportSyncRemoteControlSkeleton, "handle-shuffle-songs",
                    G_CALLBACK(on_handle_shuffle_songs), NULL);
-  g_signal_connect(shairportSyncRemoteControlSkeleton, "handle-mute",
-                   G_CALLBACK(on_handle_mute), NULL);
-  g_signal_connect(shairportSyncRemoteControlSkeleton, "handle-unmute",
-                   G_CALLBACK(on_handle_unmute), NULL);
-  g_signal_connect(shairportSyncRemoteControlSkeleton, "handle-change-volume",
-                   G_CALLBACK(on_handle_change_volume), NULL);
-  g_signal_connect(shairportSyncRemoteControlSkeleton, "handle-enable-open-alsa",
-                   G_CALLBACK(on_handle_enable_open_alsa), NULL);
-  g_signal_connect(shairportSyncRemoteControlSkeleton, "handle-disable-open-alsa",
-                   G_CALLBACK(on_handle_disable_open_alsa), NULL);
+  g_signal_connect(shairportSyncRemoteControlSkeleton, "handle-mute", G_CALLBACK(on_handle_mute), NULL);
+  g_signal_connect(shairportSyncRemoteControlSkeleton, "handle-unmute", G_CALLBACK(on_handle_unmute), NULL);
+  g_signal_connect(shairportSyncRemoteControlSkeleton, "handle-change-volume", G_CALLBACK(on_handle_change_volume), NULL);
+  g_signal_connect(shairportSyncRemoteControlSkeleton, "handle-enable-open-alsa", G_CALLBACK(on_handle_enable_open_alsa), NULL);
+  g_signal_connect(shairportSyncRemoteControlSkeleton, "handle-disable-open-alsa", G_CALLBACK(on_handle_disable_open_alsa), NULL);
   g_signal_connect(shairportSyncRemoteControlSkeleton, "handle-volume-up",
                    G_CALLBACK(on_handle_volume_up), NULL);
   g_signal_connect(shairportSyncRemoteControlSkeleton, "handle-volume-down",
